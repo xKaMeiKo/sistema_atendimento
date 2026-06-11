@@ -15,7 +15,7 @@ def init_connection():
 
 supabase: Client = init_connection()
 
-# Inicialização de estados da sessão importantes para a navegação
+# Inicialização de estados da sessão importantes para a navegação e limpeza
 if "logado" not in st.session_state:
     st.session_state.logado = False
     st.session_state.user_email = ""
@@ -24,7 +24,13 @@ if "logado" not in st.session_state:
 if "chamado_selecionado_id" not in st.session_state:
     st.session_state.chamado_selecionado_id = None
 if "tela_atual" not in st.session_state:
-    st.session_state.tela_atual = "📝 Novo Atendimento"
+    st.session_state.tela_atual = "novo" # 'novo' ou 'atualizar'
+
+# Chaves para forçar a limpeza do formulário de novos registros
+if "form_morador" not in st.session_state:
+    st.session_state.form_morador = ""
+if "form_solicitacao" not in st.session_state:
+    st.session_state.form_solicitacao = ""
 
 # Função para resumir textos longos
 def gerar_resumo(texto, max_caracteres=55):
@@ -66,17 +72,25 @@ else:
         st.write(f"🛡️ **Nível:** {st.session_state.user_role}")
         
         st.divider()
-        st.subheader("⚠️ Chamados Ativos (Clique para Abrir)")
+        
+        # Botão dedicado para abrir a tela de Novo Registro e limpar seleções anteriores
+        if st.button("➕ Criar Novo Atendimento", use_container_width=True, type="secondary"):
+            st.session_state.tela_atual = "novo"
+            st.session_state.chamado_selecionado_id = None
+            st.rerun()
+            
+        st.divider()
+        st.subheader("⚠️ Chamados Ativos (Clique para Tratar)")
         
         if chamados_abertos:
             for chamado in chamados_abertos:
                 resumo = gerar_resumo(chamado['solicitacao'])
                 label_botao = f"Nº {chamado['id']} - {chamado['morador']}\n💬 {resumo}"
                 
-                # Se clicar no botão da lateral, muda a tela ativa e seleciona o ID
+                # Clicar aqui agora GARANTE a troca de tela sem travar no componente visual anterior
                 if st.button(label_botao, key=f"btn_{chamado['id']}", use_container_width=True):
                     st.session_state.chamado_selecionado_id = chamado['id']
-                    st.session_state.tela_atual = "🔄 Atualizar Chamado" # Força a troca de tela
+                    st.session_state.tela_atual = "atualizar"
                     st.rerun()
         else:
             st.info("Nenhum chamado pendente.")
@@ -88,32 +102,24 @@ else:
 
     # ------------------ PAINEL PRINCIPAL ------------------
     st.title("📋 Painel de Controle de Atendimentos")
+    st.divider()
     
     # ------------------ VISÃO DO ATENDENTE ------------------
     if st.session_state.user_role == "Atendente":
-        
-        # Menu de navegação superior usando botões de rádio horizontais (Garante o controle do código)
-        st.session_state.tela_atual = st.radio(
-            "Navegação:",
-            ["📝 Novo Atendimento", "🔄 Atualizar Chamado"],
-            index=0 if st.session_state.tela_atual == "📝 Novo Atendimento" else 1,
-            horizontal=True,
-            label_visibility="collapsed"
-        )
-        
-        st.divider()
 
         # TELA 1: NOVO ATENDIMENTO
-        if st.session_state.tela_atual == "📝 Novo Atendimento":
+        if st.session_state.tela_atual == "novo":
             st.subheader("📝 Registrar Novo Atendimento")
+            
             col1, col2 = st.columns(2)
             with col1:
-                morador = st.text_input("Nome do Morador")
+                # Usamos a chave de sessão 'value' para conseguir zerar o campo programaticamente
+                morador = st.text_input("Nome do Morador", value=st.session_state.form_morador, key="input_morador")
                 meio_contato = st.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
             with col2:
                 etapa = st.selectbox("Etapa Inicial", ["Em andamento", "Concluído"])
                 
-            solicitacao = st.text_area("Solicitação (Descreva o que foi pedido)")
+            solicitacao = st.text_area("Solicitação (Descreva o que foi pedido)", value=st.session_state.form_solicitacao, key="input_solicitacao")
             
             if st.button("Salvar Registro", type="primary", use_container_width=True):
                 if morador and solicitacao:
@@ -125,17 +131,21 @@ else:
                         "solicitacao": solicitacao
                     }
                     supabase.table("atendimentos").insert(dados).execute()
-                    st.success("Atendimento registrado com sucesso!")
-                    st.rerun()
+                    
+                    # SUCESSO! Agora limpamos as caixas de texto limpando o estado delas
+                    st.session_state.form_morador = ""
+                    st.session_state.form_solicitacao = ""
+                    
+                    st.success("Atendimento registrado com sucesso! O formulário foi limpo.")
+                    st.rerun() # Reinicia a página com os campos limpos
                 else:
                     st.warning("Por favor, preencha o nome do morador e a solicitação.")
                     
         # TELA 2: ATUALIZAR CHAMADO
-        elif st.session_state.tela_atual == "🔄 Atualizar Chamado":
+        elif st.session_state.tela_atual == "atualizar":
             if chamados_abertos:
                 opcoes_chamados = {f"Nº {c['id']} - {c['morador']}": c for c in chamados_abertos}
                 
-                # Pré-seleciona o chamado correto se veio do clique lateral
                 index_padrao = 0
                 if st.session_state.chamado_selecionado_id:
                     for i, (texto, ch) in enumerate(opcoes_chamados.items()):
@@ -163,15 +173,19 @@ else:
                             "etapa": nova_etapa
                         }).eq("id", chamado_atual['id']).execute()
                         
-                        # Limpa os estados de seleção e volta para a tela inicial
+                        # Limpa os estados de seleção e força o retorno para a tela de novo cadastro limpo
                         st.session_state.chamado_selecionado_id = None
-                        st.session_state.tela_atual = "📝 Novo Atendimento"
+                        st.session_state.tela_atual = "novo"
+                        st.session_state.form_morador = ""
+                        st.session_state.form_solicitacao = ""
                         st.success("Chamado atualizado com sucesso!")
                         st.rerun()
                     else:
                         st.warning("Escreva o que foi feito antes de salvar.")
             else:
                 st.info("Não há chamados em andamento para atualizar no momento.")
+                st.session_state.tela_atual = "novo"
+                st.rerun()
 
     # ------------------ VISÃO DO SUPERVISOR (DASHBOARD) ------------------
     elif st.session_state.user_role == "Supervisor":
