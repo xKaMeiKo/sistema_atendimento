@@ -3,7 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 
 # 1. Configuração da página
-st.set_page_config(page_title="Sistema de Atendimentos Pro", page_icon="📋", layout="wide")
+st.set_page_config(page_title="Sistema de Chamados Pro", page_icon="📋", layout="wide")
 
 # CONEXÃO COM O SUPABASE (Mantenha as suas chaves aqui)
 SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
@@ -40,61 +40,115 @@ if not st.session_state.logado:
         except Exception:
             st.error("Usuário ou senha incorretos.")
 
-# --- SISTEMA APÓS LOGIN ---
+# --- SESSÃO LOGADA ---
 else:
+    # ------------------ BARRA LATERAL (MENU ESQUERDO) ------------------
     with st.sidebar:
         st.write(f"👤 **Usuário:** {st.session_state.user_email}")
         st.write(f"🛡️ **Nível:** {st.session_state.user_role}")
+        
+        st.divider()
+        st.subheader("⚠️ Chamados Em Andamento")
+        
+        # Busca os chamados abertos para exibir no menu lateral (Disponível para todos)
+        try:
+            busca_abertos = supabase.table("atendimentos").select("id, morador, solicitacao").eq("etapa", "Em andamento").execute()
+            chamados_abertos = busca_abertos.data
+        except Exception:
+            chamados_abertos = []
+            
+        if chamados_abertos:
+            for chamado in chamados_abertos:
+                # Cria um pequeno card visual para cada chamado na lateral
+                with st.container(border=True):
+                    st.markdown(f"**Nº {chamado['id']} - Morador: {chamado['morador']}**")
+                    st.caption(f"💬 {chamado['solicitacao'][:60]}...") # Mostra só o começo do texto
+        else:
+            st.info("Nenhum chamado pendente.")
+            
+        st.divider()
         if st.button("Sair", use_container_width=True):
             st.session_state.logado = False
             st.rerun()
 
+    # ------------------ PAINEL PRINCIPAL ------------------
     st.title("📋 Painel de Controle de Atendimentos")
     
     # ------------------ VISÃO DO ATENDENTE ------------------
     if st.session_state.user_role == "Atendente":
-        st.subheader("📝 Registrar Novo Atendimento")
         
-        # Organizando os campos lado a lado para um design mais limpo
-        col1, col2 = st.columns(2)
-        with col1:
-            morador = st.text_input("Nome do Morador")
-            meio_contato = st.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
-        with col2:
-            etapa = st.selectbox("Etapa Inicial", ["Em andamento", "Concluído"])
+        # Abas para separar a criação de novos chamados da atualização dos existentes
+        aba_novo, aba_atualizar = st.tabs(["📝 Registrar Novo Atendimento", "🔄 Atualizar Chamado Pendente"])
+        
+        with aba_novo:
+            col1, col2 = st.columns(2)
+            with col1:
+                morador = st.text_input("Nome do Morador")
+                meio_contato = st.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
+            with col2:
+                etapa = st.selectbox("Etapa Inicial", ["Em andamento", "Concluído"])
+                
+            solicitacao = st.text_area("Solicitação (Descreva o que foi pedido)")
             
-        solicitacao = st.text_area("Solicitação (Descreva o que foi pedido)")
-        
-        if st.button("Salvar Registro", type="primary", use_container_width=True):
-            if morador and solicitacao:
-                dados = {
-                    "usuario_id": st.session_state.user_id,
-                    "morador": morador,
-                    "meio_contato": meio_contato,
-                    "etapa": etapa,
-                    "solicitacao": solicitacao
-                }
-                supabase.table("atendimentos").insert(dados).execute()
-                st.success("Atendimento registrado com sucesso!")
+            if st.button("Salvar Registro", type="primary", use_container_width=True):
+                if morador and solicitacao:
+                    dados = {
+                        "usuario_id": st.session_state.user_id,
+                        "morador": morador,
+                        "meio_contato": meio_contato,
+                        "etapa": etapa,
+                        "solicitacao": solicitacao
+                    }
+                    supabase.table("atendimentos").insert(dados).execute()
+                    st.success("Atendimento registrado com sucesso!")
+                    st.rerun() # Recarrega a página para atualizar o menu lateral na hora
+                else:
+                    st.warning("Por favor, preencha o nome do morador e a solicitação.")
+                    
+        with aba_atualizar:
+            if chamados_abertos:
+                st.markdown("### Selecione o chamado para atualizar:")
+                # Cria uma lista bonita para o atendente escolher qual chamado quer mexer
+                opcoes_chamados = {f"Nº {c['id']} - {c['morador']}": c for c in chamados_abertos}
+                selecionado = st.selectbox("Escolha o chamado:", list(opcoes_chamados.keys()))
+                
+                chamado_atual = opcoes_chamados[selecionado]
+                
+                # Mostra o problema original
+                st.info(f"**Histórico Original:** {chamado_atual['solicitacao']}")
+                
+                # Campos para a atualização
+                nova_atualizacao = st.text_area("Descreva a atualização ou andamento da situação:")
+                nova_etapa = st.selectbox("Mudar Status para:", ["Em andamento", "Concluído"], key="atualizar_status")
+                
+                if st.button("Gravar Atualização", type="secondary", use_container_width=True):
+                    if nova_atualizacao:
+                        # Junta o texto antigo com o novo texto de atualização para não perder o histórico
+                        texto_atualizado = f"{chamado_atual['solicitacao']}\n\n[Nova Atualização]: {nova_atualizacao}"
+                        
+                        supabase.table("atendimentos").update({
+                            "solicitacao": texto_atualizado,
+                            "etapa": nova_etapa
+                        }).eq("id", chamado_atual['id']).execute()
+                        
+                        st.success("Chamado atualizado com sucesso!")
+                        st.rerun() # Atualiza a tela para sumir da lateral se foi concluído
+                    else:
+                        st.warning("Escreva o que foi feito antes de salvar.")
             else:
-                st.warning("Por favor, preencha o nome do morador e a solicitação.")
+                st.info("Não há chamados em andamento para atualizar no momento.")
 
     # ------------------ VISÃO DO SUPERVISOR (DASHBOARD) ------------------
     elif st.session_state.user_role == "Supervisor":
         st.subheader("📊 Dashboard Executivo de Supervisão")
         
-        # Busca dados do banco trazendo junto o e-mail de quem atendeu
         resposta = supabase.table("atendimentos").select("*, perfis(email)").execute()
         
         if resposta.data:
-            # Transforma os dados em uma tabela Pandas para facilitar os gráficos
             df = pd.DataFrame(resposta.data)
-            # Extrai o e-mail do colaborador de dentro do relacionamento do banco
             df['Colaborador'] = df['perfis'].apply(lambda x: x['email'] if isinstance(x, dict) else 'Desconhecido')
-            # Formata a data para formato legível (Ano-Mês-Dia)
             df['Data'] = pd.to_datetime(df['data_hora']).dt.date
             
-            # --- CARD DE MÉTRICAS RÁPIDAS ---
             m1, m2, m3 = st.columns(3)
             m1.metric("Total de Atendimentos", len(df))
             m2.metric("Atendimentos Em Andamento", len(df[df['etapa'] == 'Em andamento']))
@@ -102,32 +156,22 @@ else:
             
             st.divider()
             
-            # --- BLOCO DE GRÁFICOS ---
             g1, g2 = st.columns(2)
-            
             with g1:
                 st.markdown("### 👥 Atendimentos por Colaborador")
-                atend_por_colab = df['Colaborador'].value_counts()
-                st.bar_chart(atend_por_colab)
-                
+                st.bar_chart(df['Colaborador'].value_counts())
             with g2:
                 st.markdown("### 📞 Atendimentos por Meio de Contato")
-                atend_por_meio = df['meio_contato'].value_counts()
-                st.bar_chart(atend_por_meio)
+                st.bar_chart(df['meio_contato'].value_counts())
                 
             st.divider()
-            
             st.markdown("### 📅 Evolução Diária de Atendimentos")
-            atend_por_dia = df.groupby('Data').size()
-            st.line_chart(atend_por_dia)
+            st.line_chart(df.groupby('Data').size())
             
             st.divider()
-            
-            # --- TABELA DE DADOS COMPLETA ---
             st.markdown("### 📑 Histórico Completo de Registros")
-            # Seleciona e organiza as colunas para exibição na tabela limpa
             df_exibicao = df[['Data', 'Colaborador', 'morador', 'meio_contato', 'solicitacao', 'etapa']]
-            df_exibicao.columns = ['Data', 'Atendente', 'Morador', 'Meio de Contato', 'Solicitação', 'Status']
+            df_exibicao.columns = ['Data', 'Atendente', 'Morador', 'Meio de Contato', 'Histórico/Solicitação', 'Status']
             st.dataframe(df_exibicao, use_container_width=True)
             
         else:
