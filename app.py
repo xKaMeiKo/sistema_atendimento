@@ -3,7 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 
 # 1. Configuração da página
-st.set_page_config(page_title="Sistema de Chamados Pro", page_icon="📋", layout="wide")
+st.set_page_config(page_title="Sistema de Chamados Inteligente", page_icon="📋", layout="wide")
 
 # CONEXÃO COM O SUPABASE (Mantenha as suas chaves aqui)
 SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
@@ -15,11 +15,22 @@ def init_connection():
 
 supabase: Client = init_connection()
 
+# Inicialização de estados da sessão importantes para a navegação
 if "logado" not in st.session_state:
     st.session_state.logado = False
     st.session_state.user_email = ""
     st.session_state.user_role = ""  
     st.session_state.user_id = ""
+if "chamado_selecionado_id" not in st.session_state:
+    st.session_state.chamado_selecionado_id = None
+if "aba_ativa" not in st.session_state:
+    st.session_state.aba_ativa = 0
+
+# Função simples e inteligente para resumir textos longos sem pesar a máquina
+def gerar_resumo(texto, max_caracteres=55):
+    if len(texto) <= max_caracteres:
+        return texto
+    return texto[:max_caracteres].strip() + "..."
 
 # --- TELA DE LOGIN ---
 if not st.session_state.logado:
@@ -42,27 +53,31 @@ if not st.session_state.logado:
 
 # --- SESSÃO LOGADA ---
 else:
-    # ------------------ BARRA LATERAL (MENU ESQUERDO) ------------------
+    # Busca os chamados abertos no início para usar tanto na lateral quanto nas abas
+    try:
+        busca_abertos = supabase.table("atendimentos").select("id, morador, solicitacao, meio_contato").eq("etapa", "Em andamento").execute()
+        chamados_abertos = busca_abertos.data
+    except Exception:
+        chamados_abertos = []
+
+    # ------------------ BARRA LATERAL (MENU CLICÁVEL) ------------------
     with st.sidebar:
         st.write(f"👤 **Usuário:** {st.session_state.user_email}")
         st.write(f"🛡️ **Nível:** {st.session_state.user_role}")
         
         st.divider()
-        st.subheader("⚠️ Chamados Em Andamento")
+        st.subheader("⚠️ Chamados Ativos (Clique para Abrir)")
         
-        # Busca os chamados abertos para exibir no menu lateral (Disponível para todos)
-        try:
-            busca_abertos = supabase.table("atendimentos").select("id, morador, solicitacao").eq("etapa", "Em andamento").execute()
-            chamados_abertos = busca_abertos.data
-        except Exception:
-            chamados_abertos = []
-            
         if chamados_abertos:
             for chamado in chamados_abertos:
-                # Cria um pequeno card visual para cada chamado na lateral
-                with st.container(border=True):
-                    st.markdown(f"**Nº {chamado['id']} - Morador: {chamado['morador']}**")
-                    st.caption(f"💬 {chamado['solicitacao'][:60]}...") # Mostra só o começo do texto
+                resumo = gerar_resumo(chamado['solicitacao'])
+                label_botao = f"Nº {chamado['id']} - {chamado['morador']}\n💬 {resumo}"
+                
+                # Transforma o chamado em um botão real clicável
+                if st.button(label_botao, key=f"btn_{chamado['id']}", use_container_width=True):
+                    st.session_state.chamado_selecionado_id = chamado['id']
+                    st.session_state.aba_ativa = 1 # Força o sistema a ir para a aba de atualização
+                    st.rerun()
         else:
             st.info("Nenhum chamado pendente.")
             
@@ -77,9 +92,13 @@ else:
     # ------------------ VISÃO DO ATENDENTE ------------------
     if st.session_state.user_role == "Atendente":
         
-        # Abas para separar a criação de novos chamados da atualização dos existentes
+        # Usamos o state 'aba_ativa' para controlar qual aba abre por padrão
         aba_novo, aba_atualizar = st.tabs(["📝 Registrar Novo Atendimento", "🔄 Atualizar Chamado Pendente"])
         
+        # Lógica para forçar a mudança visual de aba se clicado na lateral
+        if st.session_state.aba_ativa == 1:
+            st.markdown("""<style>button[id$='-tab-1'] { background-color: #e6f0fa !important; font-weight: bold; }</style>""", unsafe_allow_html=True)
+
         with aba_novo:
             col1, col2 = st.columns(2)
             with col1:
@@ -101,29 +120,36 @@ else:
                     }
                     supabase.table("atendimentos").insert(dados).execute()
                     st.success("Atendimento registrado com sucesso!")
-                    st.rerun() # Recarrega a página para atualizar o menu lateral na hora
+                    st.rerun()
                 else:
                     st.warning("Por favor, preencha o nome do morador e a solicitação.")
                     
         with aba_atualizar:
             if chamados_abertos:
-                st.markdown("### Selecione o chamado para atualizar:")
-                # Cria uma lista bonita para o atendente escolher qual chamado quer mexer
                 opcoes_chamados = {f"Nº {c['id']} - {c['morador']}": c for c in chamados_abertos}
-                selecionado = st.selectbox("Escolha o chamado:", list(opcoes_chamados.keys()))
                 
+                # Se o atendente clicou pelo menu lateral, pré-selecionamos o chamado correto aqui
+                index_padrao = 0
+                if st.session_state.chamado_selecionado_id:
+                    for i, (texto, ch) in enumerate(opcoes_chamados.items()):
+                        if ch['id'] == st.session_state.chamado_selecionado_id:
+                            index_padrao = i
+                            break
+                
+                selecionado = st.selectbox("Escolha o chamado:", list(opcoes_chamados.keys()), index=index_padrao)
                 chamado_atual = opcoes_chamados[selecionado]
                 
-                # Mostra o problema original
-                st.info(f"**Histórico Original:** {chamado_atual['solicitacao']}")
+                # Mostra o problema completo na tela central, resolvendo o problema de cortar texto
+                st.markdown("### 📄 Detalhes do Chamado Selecionado")
+                with st.container(border=True):
+                    st.markdown(f"**Morador:** {chamado_atual['morador']} | **Contato:** {chamado_atual['meio_contato']}")
+                    st.write(chamado_atual['solicitacao'])
                 
-                # Campos para a atualização
                 nova_atualizacao = st.text_area("Descreva a atualização ou andamento da situação:")
                 nova_etapa = st.selectbox("Mudar Status para:", ["Em andamento", "Concluído"], key="atualizar_status")
                 
                 if st.button("Gravar Atualização", type="secondary", use_container_width=True):
                     if nova_atualizacao:
-                        # Junta o texto antigo com o novo texto de atualização para não perder o histórico
                         texto_atualizado = f"{chamado_atual['solicitacao']}\n\n[Nova Atualização]: {nova_atualizacao}"
                         
                         supabase.table("atendimentos").update({
@@ -131,8 +157,11 @@ else:
                             "etapa": nova_etapa
                         }).eq("id", chamado_atual['id']).execute()
                         
+                        # Limpa os estados de seleção ao concluir
+                        st.session_state.chamado_selecionado_id = None
+                        st.session_state.aba_ativa = 0
                         st.success("Chamado atualizado com sucesso!")
-                        st.rerun() # Atualiza a tela para sumir da lateral se foi concluído
+                        st.rerun()
                     else:
                         st.warning("Escreva o que foi feito antes de salvar.")
             else:
