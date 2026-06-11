@@ -23,10 +23,10 @@ if "logado" not in st.session_state:
     st.session_state.user_id = ""
 if "chamado_selecionado_id" not in st.session_state:
     st.session_state.chamado_selecionado_id = None
-if "aba_ativa" not in st.session_state:
-    st.session_state.aba_ativa = 0
+if "tela_atual" not in st.session_state:
+    st.session_state.tela_atual = "📝 Novo Atendimento"
 
-# Função simples e inteligente para resumir textos longos sem pesar a máquina
+# Função para resumir textos longos
 def gerar_resumo(texto, max_caracteres=55):
     if len(texto) <= max_caracteres:
         return texto
@@ -53,7 +53,7 @@ if not st.session_state.logado:
 
 # --- SESSÃO LOGADA ---
 else:
-    # Busca os chamados abertos no início para usar tanto na lateral quanto nas abas
+    # Busca os chamados abertos no início
     try:
         busca_abertos = supabase.table("atendimentos").select("id, morador, solicitacao, meio_contato").eq("etapa", "Em andamento").execute()
         chamados_abertos = busca_abertos.data
@@ -73,10 +73,10 @@ else:
                 resumo = gerar_resumo(chamado['solicitacao'])
                 label_botao = f"Nº {chamado['id']} - {chamado['morador']}\n💬 {resumo}"
                 
-                # Transforma o chamado em um botão real clicável
+                # Se clicar no botão da lateral, muda a tela ativa e seleciona o ID
                 if st.button(label_botao, key=f"btn_{chamado['id']}", use_container_width=True):
                     st.session_state.chamado_selecionado_id = chamado['id']
-                    st.session_state.aba_ativa = 1 # Força o sistema a ir para a aba de atualização
+                    st.session_state.tela_atual = "🔄 Atualizar Chamado" # Força a troca de tela
                     st.rerun()
         else:
             st.info("Nenhum chamado pendente.")
@@ -92,14 +92,20 @@ else:
     # ------------------ VISÃO DO ATENDENTE ------------------
     if st.session_state.user_role == "Atendente":
         
-        # Usamos o state 'aba_ativa' para controlar qual aba abre por padrão
-        aba_novo, aba_atualizar = st.tabs(["📝 Registrar Novo Atendimento", "🔄 Atualizar Chamado Pendente"])
+        # Menu de navegação superior usando botões de rádio horizontais (Garante o controle do código)
+        st.session_state.tela_atual = st.radio(
+            "Navegação:",
+            ["📝 Novo Atendimento", "🔄 Atualizar Chamado"],
+            index=0 if st.session_state.tela_atual == "📝 Novo Atendimento" else 1,
+            horizontal=True,
+            label_visibility="collapsed"
+        )
         
-        # Lógica para forçar a mudança visual de aba se clicado na lateral
-        if st.session_state.aba_ativa == 1:
-            st.markdown("""<style>button[id$='-tab-1'] { background-color: #e6f0fa !important; font-weight: bold; }</style>""", unsafe_allow_html=True)
+        st.divider()
 
-        with aba_novo:
+        # TELA 1: NOVO ATENDIMENTO
+        if st.session_state.tela_atual == "📝 Novo Atendimento":
+            st.subheader("📝 Registrar Novo Atendimento")
             col1, col2 = st.columns(2)
             with col1:
                 morador = st.text_input("Nome do Morador")
@@ -124,11 +130,12 @@ else:
                 else:
                     st.warning("Por favor, preencha o nome do morador e a solicitação.")
                     
-        with aba_atualizar:
+        # TELA 2: ATUALIZAR CHAMADO
+        elif st.session_state.tela_atual == "🔄 Atualizar Chamado":
             if chamados_abertos:
                 opcoes_chamados = {f"Nº {c['id']} - {c['morador']}": c for c in chamados_abertos}
                 
-                # Se o atendente clicou pelo menu lateral, pré-selecionamos o chamado correto aqui
+                # Pré-seleciona o chamado correto se veio do clique lateral
                 index_padrao = 0
                 if st.session_state.chamado_selecionado_id:
                     for i, (texto, ch) in enumerate(opcoes_chamados.items()):
@@ -136,10 +143,9 @@ else:
                             index_padrao = i
                             break
                 
-                selecionado = st.selectbox("Escolha o chamado:", list(opcoes_chamados.keys()), index=index_padrao)
+                selecionado = st.selectbox("Escolha o chamado para tratar:", list(opcoes_chamados.keys()), index=index_padrao)
                 chamado_atual = opcoes_chamados[selecionado]
                 
-                # Mostra o problema completo na tela central, resolvendo o problema de cortar texto
                 st.markdown("### 📄 Detalhes do Chamado Selecionado")
                 with st.container(border=True):
                     st.markdown(f"**Morador:** {chamado_atual['morador']} | **Contato:** {chamado_atual['meio_contato']}")
@@ -157,9 +163,9 @@ else:
                             "etapa": nova_etapa
                         }).eq("id", chamado_atual['id']).execute()
                         
-                        # Limpa os estados de seleção ao concluir
+                        # Limpa os estados de seleção e volta para a tela inicial
                         st.session_state.chamado_selecionado_id = None
-                        st.session_state.aba_ativa = 0
+                        st.session_state.tela_atual = "📝 Novo Atendimento"
                         st.success("Chamado atualizado com sucesso!")
                         st.rerun()
                     else:
