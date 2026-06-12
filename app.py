@@ -8,8 +8,8 @@ import time
 st.set_page_config(page_title="CondoTickets SaaS", layout="wide", page_icon="🏢")
 
 # --- CONEXÃO SUPABASE ---
-SUPABASE_URL = "SUA_URL_AQUI"
-SUPABASE_KEY = "SUA_KEY_AQUI"
+SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
+SUPABASE_KEY = "sb_publishable_EFjZ74m8m8bxBFYiNhvjaA_aIyGzRS8"
 
 @st.cache_resource
 def init_connection():
@@ -125,4 +125,86 @@ if user['nivel_acesso'] == 'Atendente':
                     }
                     supabase.table("atendimentos").insert(data).execute()
                     st.success("Chamado registrado com sucesso!")
-                    time.sleep()
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("Por favor, preencha o nome da pessoa e a descrição.")
+
+    elif st.session_state.view_modo == "Atualizar":
+        st.title("🔄 Atualizar Chamado")
+        tid = st.session_state.ticket_selecionado
+        
+        res = supabase.table("atendimentos").select("*").eq("id", tid).single().execute()
+        chamado = res.data
+        
+        col_inf1, col_inf2, col_inf3 = st.columns(3)
+        col_inf1.metric("Pessoa", chamado['pessoa'])
+        col_inf2.metric("Tipo / Categoria", f"{chamado.get('tipo_pessoa', 'Morador')} / {chamado.get('categoria_solicitacao', 'Geral')}")
+        try:
+            data_formatada = datetime.fromisoformat(chamado['data_hora'].replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+        except:
+            data_formatada = "Data indisponível"
+        col_inf3.metric("Abertura", data_formatada)
+        
+        st.markdown("**Histórico Atual:**")
+        st.info(chamado['solicitacao'])
+        
+        with st.form("form_update"):
+            nova_att = st.text_area("Nova Atualização / Andamento")
+            nova_etapa = st.selectbox("Status", ["Em andamento", "Concluído"])
+            
+            if st.form_submit_button("Salvar Alterações", type="primary"):
+                if nova_att:
+                    data_hora_agora = datetime.now().strftime('%d/%m %H:%M')
+                    historico_updated = f"{chamado['solicitacao']}\n\n--- Atualização ({data_hora_agora}) por [{nome_usuario_limpo}] ---\n{nova_att}"
+                    
+                    supabase.table("atendimentos").update({
+                        "solicitacao": historico_updated,
+                        "etapa": nova_etapa
+                    }).eq("id", tid).execute()
+                    
+                    st.success("Chamado atualizado com sucesso!")
+                    time.sleep(1)
+                    st.session_state.view_modo = "Novo"
+                    st.session_state.ticket_selecionado = None
+                    st.rerun()
+                else:
+                    st.warning("Insira uma descrição para atualizar.")
+
+# --- VISÃO: SUPERVISOR (DASHBOARD) ---
+elif user['nivel_acesso'] == 'Supervisor':
+    st.title("📊 Dashboard Executivo")
+    
+    res_all = supabase.table("atendimentos").select("*, perfis(email)").execute()
+    df = pd.DataFrame(res_all.data)
+    
+    if not df.empty:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total de Atendimentos", len(df))
+        m2.metric("Em Andamento", len(df[df['etapa'] == 'Em andamento']))
+        m3.metric("Concluídos", len(df[df['etapa'] == 'Concluído']))
+        
+        st.divider()
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Atendimentos por Colaborador")
+            df['atendente'] = df['perfis'].apply(lambda x: x['email'] if isinstance(x, dict) else 'N/A')
+            st.bar_chart(df['atendente'].value_counts())
+            
+        with c2:
+            st.subheader("Meio de Contato")
+            st.bar_chart(df['meio_contato'].value_counts())
+            
+        st.subheader("Evolução Diária")
+        df['data'] = pd.to_datetime(df['data_hora']).dt.date
+        st.line_chart(df.groupby('data').size())
+        
+        st.subheader("📋 Histórico Completo (Auditoria)")
+        df_exibicao = df.copy()
+        if 'pessoa' in df_exibicao.columns:
+            st.dataframe(df_exibicao[['id', 'data_hora', 'atendente', 'pessoa', 'meio_contato', 'etapa']], use_container_width=True)
+        else:
+            st.dataframe(df_exibicao, use_container_width=True)
+    else:
+        st.info("Nenhum dado encontrado para gerar o dashboard.")
