@@ -185,7 +185,13 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
             if st.button("Registrar Chamado", type="primary", use_container_width=True):
                 if pessoa and solicitacao_detalhe:
                     
-                    url_foto_final = converter_para_base64(foto_anexa)
+                    base64_foto = converter_para_base64(foto_anexa)
+                    url_foto_final = None
+                    
+                    if base64_foto:
+                        # Salva no formato estruturado: Imagem::Usuario::DataHora
+                        data_hora_criacao = datetime.now().strftime('%d/%m %H:%M')
+                        url_foto_final = f"{base64_foto}::{nome_usuario_limpo}::{data_hora_criacao}"
                     
                     data = {
                         "usuario_id": user['id'],
@@ -229,14 +235,23 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 st.markdown("**Histórico de Ocorrências:**")
                 st.info(chamado['solicitacao'])
                 
-                # --- MINIATURAS EXPANSÍVEIS (NÃO GERA IMAGENS AUTOMÁTICAS) ---
+                # --- PROCESSAMENTO DA GALERIA EXTRAÍDA ---
                 if chamado.get('url_imagem'):
-                    st.markdown("**📸 Fotos Anexadas (Clique para expandir):**")
-                    lista_fotos = chamado['url_imagem'].split("||")
+                    st.markdown("**📸 Fotos do Histórico:**")
+                    blocos_fotos = chamado['url_imagem'].split("||")
                     
-                    # Cria abas retráteis individuais para cada foto do histórico
-                    for idx, string_foto in enumerate(lista_fotos):
-                        with st.expander(f"🖼️ Ver Anexo #{idx + 1}"):
+                    for idx, bloco in enumerate(blocos_fotos):
+                        # Tenta quebrar o bloco estruturado para extrair os metadados
+                        partes = bloco.split("::")
+                        if len(partes) == 3:
+                            string_foto, usuario_upload, data_upload = partes
+                            titulo_expander = f"🖼️ Anexo por [{usuario_upload}] em ({data_upload})"
+                        else:
+                            # Proteção caso existam chamados antigos criados antes dessa atualização
+                            string_foto = bloco
+                            titulo_expander = f"🖼️ Anexo Antigo #{idx + 1}"
+                            
+                        with st.expander(titulo_expander):
                             st.image(string_foto, width=600, use_container_width=False)
                 
                 foto_atualizacao = st.file_uploader("📸 Deseja anexar mais uma foto a este chamado? (Histórico)", type=["png", "jpg", "jpeg"], key="upload_att")
@@ -251,13 +266,15 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                             historico_updated = f"{chamado['solicitacao']}\n\n--- Atualização ({data_hora_agora}) por [{nome_usuario_limpo} - {cargo}] ---\n{nova_att}"
                             
                             url_foto_existente = chamado.get('url_imagem')
-                            nova_foto_string = converter_para_base64(foto_atualizacao)
+                            base64_nova_foto = converter_para_base64(foto_atualizacao)
                             
-                            if nova_foto_string:
+                            if base64_nova_foto:
+                                # Monta o novo bloco estruturado: Imagem::Usuario::DataHora
+                                novo_bloco = f"{base64_nova_foto}::{nome_usuario_limpo}::{data_hora_agora}"
                                 if url_foto_existente:
-                                    url_foto_final = f"{url_foto_existente}||{nova_foto_string}"
+                                    url_foto_final = f"{url_foto_existente}||{novo_bloco}"
                                 else:
-                                    url_foto_final = nova_foto_string
+                                    url_foto_final = novo_bloco
                             else:
                                 url_foto_final = url_foto_existente
                             
