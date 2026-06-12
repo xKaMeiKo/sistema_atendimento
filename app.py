@@ -1,9 +1,11 @@
+Python
+
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import time
-from streamlit_autorefresh import st_autorefresh # <--- Importa o cronômetro seguro
+from streamlit_autorefresh import st_autorefresh
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="CondoTickets SaaS", layout="wide", page_icon="🏢")
@@ -70,8 +72,7 @@ user = st.session_state.user_info
 nome_usuario_limpo = user['email'].split('@')[0] 
 cargo = user['nivel_acesso']
 
-# --- ATIVAÇÃO DO CRONÔMETRO AUTOMÁTICO ---
-# Atualiza a página inteira silenciosamente a cada 15000 milissegundos (15 segundos)
+# --- ATIVAÇÃO DO CRONÔMETRO AUTOMÁTICO (15 segundos) ---
 st_autorefresh(interval=15000, key="condotickets_refresh")
 
 # --- BARRA LATERAL FIXA ---
@@ -95,7 +96,7 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
     
     col_esquerda, col_direita = st.columns([1, 3])
     
-    # COLUNA ESQUERDA: LISTA DE CHAMADOS FILTRADA
+    # COLUNA ESQUERDA: LISTA DE CHAMADOS FILTRADA COM CORES E HORÁRIOS
     with col_esquerda:
         sub_c1, sub_c2 = st.columns([3, 1])
         sub_c1.subheader("📌 Chamados")
@@ -103,7 +104,8 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
             st.rerun()
         
         try:
-            query = supabase.table("atendimentos").select("id, pessoa, solicitacao, categoria_solicitacao").eq("etapa", "Em andamento")
+            # Puxamos também a coluna data_hora para fazer o cálculo do tempo
+            query = supabase.table("atendimentos").select("id, pessoa, solicitacao, categoria_solicitacao, data_hora").eq("etapa", "Em andamento")
             if cargo == "Manutenção":
                 query = query.eq("categoria_solicitacao", "Manutenção")
             elif cargo == "Financeiro":
@@ -116,8 +118,37 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
 
         if dados_ativos:
             for t in dados_ativos:
-                resumo = f"Nº {t['id']} - {t['pessoa']} ({t['categoria_solicitacao']})"
-                if st.button(resumo, key=f"btn_{t['id']}", use_container_width=True):
+                # 1. TRATAMENTO E FORMATAÇÃO DA DATA/HORA
+                try:
+                    # Converte o texto do banco para um objeto de data real em Python
+                    dt_abertura = datetime.fromisoformat(t['data_hora'].replace("Z", "+00:00"))
+                    
+                    # Formata para os padrões exigidos: dd/mm e 01h01
+                    data_texto = dt_abertura.strftime("%d/%m")
+                    hora_texto = dt_abertura.strftime("%Hh%M")
+                    
+                    # 2. CÁLCULO DO ESPECTRO DE URGÊNCIA (TEMPO EM ABERTO)
+                    agora = datetime.now(timezone.utc)
+                    diferenca = agora - dt_abertura
+                    horas_passadas = diferenca.total_seconds() / 3600
+                    
+                    # Define a cor baseado no tempo solicitado
+                    if horas_passadas >= 4:
+                        status_cor = "🔴" # Mais de 4 horas sem fechar
+                    elif horas_passadas >= 2:
+                        status_cor = "🟠" # Entre 2 e 4 horas
+                    else:
+                        status_cor = "🟢" # Recente (menos de 2 horas)
+                except:
+                    data_texto = "--/--"
+                    hora_texto = "--h--"
+                    status_cor = "⚪"
+
+                # 3. MONTAGEM DA LABEL DO BOTÃO COMPLETA
+                # Formato: 🟢 Nº 12 - Lucas (Manutenção) [12/06 - 13h45]
+                label_completa = f"{status_cor} Nº {t['id']} - {t['pessoa']} ({t['categoria_solicitacao']}) [{data_texto} - {hora_texto}]"
+                
+                if st.button(label_completa, key=f"btn_{t['id']}", use_container_width=True):
                     st.session_state.ticket_selecionado = t['id']
                     st.session_state.view_modo = "Atualizar"
                     st.rerun()
