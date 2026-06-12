@@ -35,6 +35,13 @@ def login_user(email, password):
         
         st.session_state.logged_in = True
         st.session_state.user_info = profile.data
+        
+        # Define o modo inicial dependendo do cargo para melhor usabilidade
+        if profile.data['nivel_acesso'] in ['Manutenção', 'Financeiro']:
+            st.session_state.view_modo = "Aguardando"
+        else:
+            st.session_state.view_modo = "Novo"
+            
         st.rerun()
     except Exception:
         st.error("Erro ao fazer login. Verifique suas credenciais.")
@@ -42,6 +49,8 @@ def login_user(email, password):
 def logout():
     st.session_state.logged_in = False
     st.session_state.user_info = None
+    st.session_state.view_modo = "Novo"
+    st.session_state.ticket_selecionado = None
     st.rerun()
 
 # --- INTERFACE DE LOGIN ---
@@ -58,43 +67,65 @@ if not st.session_state.logged_in:
 
 # --- ÁREA LOGADA ---
 user = st.session_state.user_info
-nome_usuario_limpo = user['email'].split('@')[0] # Extrai o início do e-mail (ex: sac)
+nome_usuario_limpo = user['email'].split('@')[0] 
+cargo = user['nivel_acesso']
 
-# --- SIDEBAR (DINÂMICA) ---
+# --- SIDEBAR COM FILTRO E ABERTURA DE CHAMADOS PARA TODOS ---
 with st.sidebar:
     st.title(f"Olá, {nome_usuario_limpo}")
-    st.info(f"Nível: {user['nivel_acesso']}")
+    st.info(f"Nível: {cargo}")
     
     if st.button("Sair", use_container_width=True):
         logout()
     
     st.divider()
     
-    if user['nivel_acesso'] == 'Atendente':
-        st.subheader("📌 Chamados Ativos")
-        try:
-            res_ativos = supabase.table("atendimentos").select("id, pessoa, solicitacao").eq("etapa", "Em andamento").execute()
-            dados_ativos = res_ativos.data
-        except:
-            dados_ativos = []
-        
-        if st.button("➕ Novo Atendimento", use_container_width=True):
+    # AGORA DISPONÍVEL PARA TODOS: Qualquer setor pode clicar para abrir um chamado novo
+    if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
+        if st.button("➕ Novo Atendimento", use_container_width=True, type="primary"):
             st.session_state.view_modo = "Novo"
             st.session_state.ticket_selecionado = None
             st.rerun()
+            
+    st.divider()
+    st.subheader("📌 Chamados do Setor")
+    
+    try:
+        query = supabase.table("atendimentos").select("id, pessoa, solicitacao, categoria_solicitacao").eq("etapa", "Em andamento")
+        
+        if cargo == "Manutenção":
+            query = query.eq("categoria_solicitacao", "Manutenção")
+        elif cargo == "Financeiro":
+            query = query.eq("categoria_solicitacao", "Financeiro")
+            
+        res_ativos = query.execute()
+        dados_ativos = res_ativos.data
+    except Exception:
+        dados_ativos = []
 
+    if dados_ativos:
         for t in dados_ativos:
-            resumo = f"Nº {t['id']} - {t['pessoa']}"
+            resumo = f"Nº {t['id']} - {t['pessoa']} ({t['categoria_solicitacao']})"
             if st.button(resumo, key=f"btn_{t['id']}", use_container_width=True):
                 st.session_state.ticket_selecionado = t['id']
                 st.session_state.view_modo = "Atualizar"
                 st.rerun()
+    else:
+        st.info("Nenhum chamado pendente para o seu setor.")
 
-# --- VISÃO: ATENDENTE ---
-if user['nivel_acesso'] == 'Atendente':
+# --- PAINEL PRINCIPAL ---
+st.title("📋 Painel de Controle de Atendimentos")
+
+# --- FLUXO OPERACIONAL (Atendentes, Manutenção e Financeiro) ---
+if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
     
-    if st.session_state.view_modo == "Novo":
-        st.title("📝 Novo Atendimento")
+    # MODO 1: TELA DE AGUARDANDO (Estado inicial limpo para técnicos)
+    if st.session_state.view_modo == "Aguardando":
+        st.info("💡 Selecione um chamado pendente na barra lateral esquerda para tratar ou clique no botão azul '➕ Novo Atendimento' para abrir um novo registro.")
+
+    # MODO 2: TELA DE NOVO ATENDIMENTO (Liberada para todos os perfis operacionais)
+    elif st.session_state.view_modo == "Novo":
+        st.subheader("📝 Registrar Novo Atendimento")
         
         with st.form("form_novo", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -103,16 +134,22 @@ if user['nivel_acesso'] == 'Atendente':
             
             c3, c4 = st.columns(2)
             meio = c3.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
-            categoria_solicitacao = c4.selectbox("Tipo de Solicitação", ["Liberação", "Informação", "Manutenção", "Financeiro"])
+            
+            # Se for um técnico abrindo, ele pode sugerir a categoria ou o sistema já pré-seleciona a dele
+            indice_padrao_categoria = 0
+            if cargo == "Manutenção": indice_padrao_categoria = 2
+            elif cargo == "Financeiro": indice_padrao_categoria = 3
+            
+            categoria_solicitacao = c4.selectbox(
+                "Tipo de Solicitação", 
+                ["Liberação", "Informação", "Manutenção", "Financeiro"],
+                index=indice_padrao_categoria
+            )
             
             etapa_inicial = st.selectbox("Status Inicial", ["Em andamento", "Concluído"])
             solicitacao_detalhe = st.text_area("Descrição Detalhada da Solicitação")
             
             if st.form_submit_button("Registrar Chamado", type="primary"):
-                if "t_etapa" in locals():
-                    status_final = t_etapa
-                else:
-                    status_final = etapa_inicial
                 if pessoa and solicitacao_detalhe:
                     data = {
                         "usuario_id": user['id'],
@@ -121,62 +158,68 @@ if user['nivel_acesso'] == 'Atendente':
                         "meio_contato": meio,
                         "categoria_solicitacao": categoria_solicitacao,
                         "solicitacao": solicitacao_detalhe,
-                        "etapa": status_final
+                        "etapa": etapa_inicial
                     }
                     supabase.table("atendimentos").insert(data).execute()
                     st.success("Chamado registrado com sucesso!")
                     time.sleep(1)
+                    
+                    # Após salvar, joga o usuário de volta para a tela inicial padrão do perfil dele
+                    st.session_state.view_modo = "Novo" if cargo == "Atendente" else "Aguardando"
                     st.rerun()
                 else:
                     st.warning("Por favor, preencha o nome da pessoa e a descrição.")
 
+    # MODO 3: TELA DE ATUALIZAÇÃO
     elif st.session_state.view_modo == "Atualizar":
-        st.title("🔄 Atualizar Chamado")
+        st.subheader("🔄 Atualizar Chamado")
         tid = st.session_state.ticket_selecionado
         
-        res = supabase.table("atendimentos").select("*").eq("id", tid).single().execute()
-        chamado = res.data
-        
-        col_inf1, col_inf2, col_inf3 = st.columns(3)
-        col_inf1.metric("Pessoa", chamado['pessoa'])
-        col_inf2.metric("Tipo / Categoria", f"{chamado.get('tipo_pessoa', 'Morador')} / {chamado.get('categoria_solicitacao', 'Geral')}")
-        try:
-            data_formatada = datetime.fromisoformat(chamado['data_hora'].replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
-        except:
-            data_formatada = "Data indisponível"
-        col_inf3.metric("Abertura", data_formatada)
-        
-        st.markdown("**Histórico Atual:**")
-        st.info(chamado['solicitacao'])
-        
-        with st.form("form_update"):
-            nova_att = st.text_area("Nova Atualização / Andamento")
-            nova_etapa = st.selectbox("Status", ["Em andamento", "Concluído"])
+        if tid:
+            res = supabase.table("atendimentos").select("*").eq("id", tid).single().execute()
+            chamado = res.data
             
-            if st.form_submit_button("Salvar Alterações", type="primary"):
-                if nova_att:
-                    data_hora_agora = datetime.now().strftime('%d/%m %H:%M')
-                    historico_updated = f"{chamado['solicitacao']}\n\n--- Atualização ({data_hora_agora}) por [{nome_usuario_limpo}] ---\n{nova_att}"
-                    
-                    supabase.table("atendimentos").update({
-                        "solicitacao": historico_updated,
-                        "etapa": nova_etapa
-                    }).eq("id", tid).execute()
-                    
-                    st.success("Chamado atualizado com sucesso!")
-                    time.sleep(1)
-                    st.session_state.view_modo = "Novo"
-                    st.session_state.ticket_selecionado = None
-                    st.rerun()
-                else:
-                    st.warning("Insira uma descrição para atualizar.")
+            col_inf1, col_inf2, col_inf3 = st.columns(3)
+            col_inf1.metric("Pessoa / Tipo", f"{chamado['pessoa']} ({chamado.get('tipo_pessoa', 'Morador')})")
+            col_inf2.metric("Departamento Destino", chamado.get('categoria_solicitacao', 'Geral'))
+            try:
+                data_formatada = datetime.fromisoformat(chamado['data_hora'].replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+            except:
+                data_formatada = "Data indisponível"
+            col_inf3.metric("Abertura", data_formatada)
+            
+            st.markdown("**Histórico de Ocorrências:**")
+            st.info(chamado['solicitacao'])
+            
+            with st.form("form_update"):
+                nova_att = st.text_area("Descreva o andamento ou resolução deste chamado:")
+                nova_etapa = st.selectbox("Status Atual", ["Em andamento", "Concluído"])
+                
+                if st.form_submit_button("Gravar Alterações", type="primary"):
+                    if nova_att:
+                        data_hora_agora = datetime.now().strftime('%d/%m %H:%M')
+                        historico_updated = f"{chamado['solicitacao']}\n\n--- Atualização ({data_hora_agora}) por [{nome_usuario_limpo} - Setor {cargo}] ---\n{nova_att}"
+                        
+                        supabase.table("atendimentos").update({
+                            "solicitacao": historico_updated,
+                            "etapa": nova_etapa
+                        }).eq("id", tid).execute()
+                        
+                        st.success("Chamado updated successfully!")
+                        time.sleep(1)
+                        
+                        st.session_state.ticket_selecionado = None
+                        st.session_state.view_modo = "Novo" if cargo == "Atendente" else "Aguardando"
+                        st.rerun()
+                    else:
+                        st.warning("Insira uma descrição para salvar a atualização.")
 
-# --- VISÃO: SUPERVISOR (DASHBOARD) ---
-elif user['nivel_acesso'] == 'Supervisor':
-    st.title("📊 Dashboard Executivo")
+# --- FLUXO 3: VISÃO DO SUPERVISOR ---
+elif cargo == 'Supervisor':
+    st.subheader("📊 Dashboard Executivo de Supervisão Geral")
     
-    res_all = supabase.table("atendimentos").select("*, perfis(email)").execute()
-    df = pd.DataFrame(res_all.data)
+    resposta_banco = supabase.table("atendimentos").select("*, perfis(email)").execute()
+    df = pd.DataFrame(resposta_banco.data)
     
     if not df.empty:
         m1, m2, m3 = st.columns(3)
@@ -193,18 +236,18 @@ elif user['nivel_acesso'] == 'Supervisor':
             st.bar_chart(df['atendente'].value_counts())
             
         with c2:
-            st.subheader("Meio de Contato")
-            st.bar_chart(df['meio_contato'].value_counts())
+            st.subheader("Demandas por Categoria/Setor")
+            if 'categoria_solicitacao' in df.columns:
+                st.bar_chart(df['categoria_solicitacao'].value_counts())
             
-        st.subheader("Evolução Diária")
+        st.subheader("Evolução Diária de Chamados")
         df['data'] = pd.to_datetime(df['data_hora']).dt.date
         st.line_chart(df.groupby('data').size())
         
-        st.subheader("📋 Histórico Completo (Auditoria)")
+        st.subheader("📋 Histórico Completo de Auditoria")
         df_exibicao = df.copy()
-        if 'pessoa' in df_exibicao.columns:
-            st.dataframe(df_exibicao[['id', 'data_hora', 'atendente', 'pessoa', 'meio_contato', 'etapa']], use_container_width=True)
-        else:
-            st.dataframe(df_exibicao, use_container_width=True)
+        colunas_exibir = ['id', 'data_hora', 'atendente', 'pessoa', 'meio_contato', 'categoria_solicitacao', 'etapa']
+        colunas_existentes = [c for c in colunas_exibir if c in df_exibicao.columns]
+        st.dataframe(df_exibicao[colunas_existentes], use_container_width=True)
     else:
-        st.info("Nenhum dado encontrado para gerar o dashboard.")
+        st.info("Nenhum dado encontrado no banco para consolidar o painel gerencial.")
