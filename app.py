@@ -3,7 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime, timezone
 import time
-import base64 # <--- Biblioteca para transformar imagem em texto
+import base64
 from streamlit_autorefresh import st_autorefresh
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -60,7 +60,7 @@ def logout():
     st.session_state.ticket_selecionado = None
     st.rerun()
 
-# Conversor de Imagem para Base64 de forma limpa
+# Conversor de Imagem para Base64
 def converter_para_base64(arquivo_upload):
     if arquivo_upload is not None:
         bytes_data = arquivo_upload.getvalue()
@@ -185,7 +185,6 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
             if st.button("Registrar Chamado", type="primary", use_container_width=True):
                 if pessoa and solicitacao_detalhe:
                     
-                    # Converte a foto para texto Base64 de forma nativa e segura
                     url_foto_final = converter_para_base64(foto_anexa)
                     
                     data = {
@@ -230,11 +229,17 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 st.markdown("**Histórico de Ocorrências:**")
                 st.info(chamado['solicitacao'])
                 
+                # --- MINIATURAS EXPANSÍVEIS (NÃO GERA IMAGENS AUTOMÁTICAS) ---
                 if chamado.get('url_imagem'):
-                    st.markdown("**📸 Foto Atual da Ocorrência:**")
-                    st.image(chamado['url_imagem'], width=450)
+                    st.markdown("**📸 Fotos Anexadas (Clique para expandir):**")
+                    lista_fotos = chamado['url_imagem'].split("||")
+                    
+                    # Cria abas retráteis individuais para cada foto do histórico
+                    for idx, string_foto in enumerate(lista_fotos):
+                        with st.expander(f"🖼️ Ver Anexo #{idx + 1}"):
+                            st.image(string_foto, width=600, use_container_width=False)
                 
-                foto_atualizacao = st.file_uploader("📸 Deseja anexar uma nova foto/comprovante para este andamento?", type=["png", "jpg", "jpeg"], key="upload_att")
+                foto_atualizacao = st.file_uploader("📸 Deseja anexar mais uma foto a este chamado? (Histórico)", type=["png", "jpg", "jpeg"], key="upload_att")
                 
                 with st.form("form_update"):
                     nova_att = st.text_area("Descreva o andamento:")
@@ -245,11 +250,16 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                             data_hora_agora = datetime.now().strftime('%d/%m %H:%M')
                             historico_updated = f"{chamado['solicitacao']}\n\n--- Atualização ({data_hora_agora}) por [{nome_usuario_limpo} - {cargo}] ---\n{nova_att}"
                             
-                            # Se enviou foto nova, converte para texto. Se não, preserva a foto antiga.
-                            if foto_atualizacao:
-                                url_foto_final = converter_para_base64(foto_atualizacao)
+                            url_foto_existente = chamado.get('url_imagem')
+                            nova_foto_string = converter_para_base64(foto_atualizacao)
+                            
+                            if nova_foto_string:
+                                if url_foto_existente:
+                                    url_foto_final = f"{url_foto_existente}||{nova_foto_string}"
+                                else:
+                                    url_foto_final = nova_foto_string
                             else:
-                                url_foto_final = chamado.get('url_imagem')
+                                url_foto_final = url_foto_existente
                             
                             supabase.table("atendimentos").update({
                                 "solicitacao": historico_updated,
