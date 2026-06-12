@@ -11,7 +11,12 @@ st.set_page_config(page_title="CondoTickets SaaS", layout="wide", page_icon="�
 # --- CONEXÃO SUPABASE ---
 SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
 SUPABASE_KEY = "sb_publishable_EFjZ74m8m8bxBFYiNhvjaA_aIyGzRS8"
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+@st.cache_resource
+def init_connection():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase: Client = init_connection()
 
 # --- GERENCIAMENTO DE COOKIES E ESTADO ---
 controller = CookieController()
@@ -48,23 +53,20 @@ def logout():
     st.session_state.user_info = None
     st.rerun()
 
-def check_auth():
-    # Tenta ler cookies se não estiver logado na sessão
-    if not st.session_state.logged_in:
-        cookie_id = controller.get("condo_user_id")
-        if cookie_id:
-            try:
-                profile = supabase.table("perfis").select("*").eq("id", cookie_id).single().execute()
-                if profile.data:
-                    st.session_state.user_info = profile.data
-                    st.session_state.logged_in = True
-                    st.rerun()
-            except:
-                pass
+# --- CORREÇÃO DA CHECAGEM AUTOMÁTICA ---
+# Em vez de dar rerun, injetamos direto no estado inicial antes do desenho da tela
+if not st.session_state.logged_in:
+    cookie_id = controller.get("condo_user_id")
+    if cookie_id:
+        try:
+            profile = supabase.table("perfis").select("*").eq("id", cookie_id).single().execute()
+            if profile.data:
+                st.session_state.user_info = profile.data
+                st.session_state.logged_in = True
+        except:
+            pass
 
-# --- INTERFACE DE LOGIN ---
-check_auth()
-
+# --- INTERFACE DE LOGIN (Caso não encontre o cookie) ---
 if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
@@ -84,22 +86,26 @@ with st.sidebar:
     st.title(f"Olá, {user['email'].split('@')[0]}")
     st.info(f"Nível: {user['nivel_acesso']}")
     
-    if st.button("Sair"):
+    if st.button("Sair", use_container_width=True):
         logout()
     
     st.divider()
     
     if user['nivel_acesso'] == 'Atendente':
         st.subheader("📌 Chamados Ativos")
-        res_ativos = supabase.table("atendimentos").select("id, morador, solicitacao").eq("etapa", "Em andamento").execute()
+        try:
+            res_ativos = supabase.table("atendimentos").select("id, morador, solicitacao").eq("etapa", "Em andamento").execute()
+            dados_ativos = res_ativos.data
+        except:
+            dados_ativos = []
         
         if st.button("➕ Novo Atendimento", use_container_width=True):
             st.session_state.view_modo = "Novo"
             st.session_state.ticket_selecionado = None
             st.rerun()
 
-        for t in res_ativos.data:
-            resumo = f"{t['morador']} - {t['solicitacao'][:20]}..."
+        for t in dados_ativos:
+            resumo = f"Nº {t['id']} - {t['morador']}"
             if st.button(resumo, key=f"btn_{t['id']}", use_container_width=True):
                 st.session_state.ticket_selecionado = t['id']
                 st.session_state.view_modo = "Atualizar"
@@ -111,13 +117,14 @@ if user['nivel_acesso'] == 'Atendente':
     if st.session_state.view_modo == "Novo":
         st.title("📝 Novo Atendimento")
         
+        # clear_on_submit limpa os campos automaticamente ao clicar no botão
         with st.form("form_novo", clear_on_submit=True):
             c1, c2 = st.columns(2)
             morador = c1.text_input("Nome do Morador")
             meio = c2.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
             solicitacao = st.text_area("Descrição da Solicitação")
             
-            if st.form_submit_button("Registrar Chamado"):
+            if st.form_submit_button("Registrar Chamado", type="primary"):
                 if morador and solicitacao:
                     data = {
                         "usuario_id": user['id'],
@@ -136,12 +143,17 @@ if user['nivel_acesso'] == 'Atendente':
     elif st.session_state.view_modo == "Atualizar":
         st.title("🔄 Atualizar Chamado")
         tid = st.session_state.ticket_selecionado
+        
         res = supabase.table("atendimentos").select("*").eq("id", tid).single().execute()
         chamado = res.data
         
         col_inf1, col_inf2 = st.columns(2)
         col_inf1.metric("Morador", chamado['morador'])
-        col_inf2.metric("Abertura", datetime.fromisoformat(chamado['data_hora']).strftime("%d/%m/%Y %H:%M"))
+        try:
+            data_formatada = datetime.fromisoformat(chamado['data_hora'].replace("Z", "+00:00")).strftime("%d/%m/%Y %H:%M")
+        except:
+            data_formatada = "Data indisponível"
+        col_inf2.metric("Abertura", data_formatada)
         
         st.markdown("**Histórico Atual:**")
         st.info(chamado['solicitacao'])
@@ -150,28 +162,30 @@ if user['nivel_acesso'] == 'Atendente':
             nova_att = st.text_area("Nova Atualização / Andamento")
             nova_etapa = st.selectbox("Status", ["Em andamento", "Concluído"])
             
-            if st.form_submit_button("Salvar Alterações"):
-                historico_atualizado = f"{chamado['solicitacao']}\n\n--- Atualização ({datetime.now().strftime('%d/%m %H:%M')}) ---\n{nova_att}"
-                supabase.table("atendimentos").update({
-                    "solicitacao": historico_atualizado,
-                    "etapa": nova_etapa
-                }).eq("id", tid).execute()
-                
-                st.success("Chamado atualizado!")
-                time.sleep(1)
-                st.session_state.view_modo = "Novo"
-                st.rerun()
+            if st.form_submit_button("Salvar Alterações", type="primary"):
+                if nova_att:
+                    historico_updated = f"{chamado['solicitacao']}\n\n--- Atualização ({datetime.now().strftime('%d/%m %H:%M')}) ---\n{nova_att}"
+                    supabase.table("atendimentos").update({
+                        "solicitacao": historico_updated,
+                        "etapa": nova_etapa
+                    }).eq("id", tid).execute()
+                    
+                    st.success("Chamado atualizado!")
+                    time.sleep(1)
+                    st.session_state.view_modo = "Novo"
+                    st.session_state.ticket_selecionado = None
+                    st.rerun()
+                else:
+                    st.warning("Insira uma descrição para atualizar.")
 
 # --- VISÃO: SUPERVISOR (DASHBOARD) ---
 elif user['nivel_acesso'] == 'Supervisor':
     st.title("📊 Dashboard Executivo")
     
-    # Busca dados
     res_all = supabase.table("atendimentos").select("*, perfis(email)").execute()
     df = pd.DataFrame(res_all.data)
     
     if not df.empty:
-        # Métricas
         m1, m2, m3 = st.columns(3)
         m1.metric("Total de Atendimentos", len(df))
         m2.metric("Em Andamento", len(df[df['etapa'] == 'Em andamento']))
@@ -183,8 +197,7 @@ elif user['nivel_acesso'] == 'Supervisor':
         
         with c1:
             st.subheader("Atendimentos por Colaborador")
-            # Extrai e-mail do objeto aninhado vindo do join
-            df['atendente'] = df['perfis'].apply(lambda x: x['email'] if x else 'N/A')
+            df['atendente'] = df['perfis'].apply(lambda x: x['email'] if isinstance(x, dict) else 'N/A')
             chart_colab = df['atendente'].value_counts()
             st.bar_chart(chart_colab)
             
