@@ -1,227 +1,204 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
+from streamlit_cookies_controller import CookieController
+from datetime import datetime
+import time
 
-# 1. Configuração da página
-st.set_page_config(page_title="Sistema de Chamados Inteligente", page_icon="📋", layout="wide")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="CondoTickets SaaS", layout="wide", page_icon="🏢")
 
-# CONEXÃO COM O SUPABASE (Mantenha as suas chaves aqui)
+# --- CONEXÃO SUPABASE ---
 SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
 SUPABASE_KEY = "sb_publishable_EFjZ74m8m8bxBFYiNhvjaA_aIyGzRS8"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-@st.cache_resource
-def init_connection():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+# --- GERENCIAMENTO DE COOKIES E ESTADO ---
+controller = CookieController()
 
-supabase: Client = init_connection()
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+if 'user_info' not in st.session_state:
+    st.session_state.user_info = None
+if 'view_modo' not in st.session_state:
+    st.session_state.view_modo = "Novo"
+if 'ticket_selecionado' not in st.session_state:
+    st.session_state.ticket_selecionado = None
 
-# Inicialização de estados da sessão importantes para a navegação e limpeza
-if "logado" not in st.session_state:
-    st.session_state.logado = False
-    st.session_state.user_email = ""
-    st.session_state.user_role = ""  
-    st.session_state.user_id = ""
-if "chamado_selecionado_id" not in st.session_state:
-    st.session_state.chamado_selecionado_id = None
-if "tela_atual" not in st.session_state:
-    st.session_state.tela_atual = "novo" # 'novo' ou 'atualizar'
-
-# Chaves para forçar a limpeza do formulário de novos registros
-if "form_morador" not in st.session_state:
-    st.session_state.form_morador = ""
-if "form_solicitacao" not in st.session_state:
-    st.session_state.form_solicitacao = ""
-
-# Função para resumir textos longos
-def gerar_resumo(texto, max_caracteres=55):
-    if len(texto) <= max_caracteres:
-        return texto
-    return texto[:max_caracteres].strip() + "..."
-
-# --- TELA DE LOGIN ---
-if not st.session_state.logado:
-    st.title("🔐 Acesso ao Sistema")
-    email_input = st.text_input("E-mail").strip().lower()
-    senha = st.text_input("Senha", type="password")
-    
-    if st.button("Entrar", use_container_width=True):
-        try:
-            auth_response = supabase.auth.sign_in_with_password({"email": email_input, "password": senha})
-            user_data = supabase.table("perfis").select("nivel_acesso").eq("id", auth_response.user.id).execute()
-            if user_data.data:
-                st.session_state.logado = True
-                st.session_state.user_email = auth_response.user.email
-                st.session_state.user_id = auth_response.user.id
-                st.session_state.user_role = str(user_data.data[0]["nivel_acesso"]).strip().capitalize()
-                st.rerun()
-        except Exception:
-            st.error("Usuário ou senha incorretos.")
-
-# --- SESSÃO LOGADA ---
-else:
-    # Busca os chamados abertos no início
+# --- FUNÇÕES DE AUXÍLIO ---
+def login_user(email, password):
     try:
-        busca_abertos = supabase.table("atendimentos").select("id, morador, solicitacao, meio_contato").eq("etapa", "Em andamento").execute()
-        chamados_abertos = busca_abertos.data
-    except Exception:
-        chamados_abertos = []
+        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        profile = supabase.table("perfis").select("*").eq("id", res.user.id).single().execute()
+        
+        # Salva no Cookie para persistência (expira em 7 dias)
+        controller.set("condo_user_id", res.user.id)
+        controller.set("condo_user_email", email)
+        
+        st.session_state.logged_in = True
+        st.session_state.user_info = profile.data
+        st.rerun()
+    except Exception as e:
+        st.error("Erro ao fazer login. Verifique suas credenciais.")
 
-    # ------------------ BARRA LATERAL (MENU CLICÁVEL) ------------------
-    with st.sidebar:
-        st.write(f"👤 **Usuário:** {st.session_state.user_email}")
-        st.write(f"🛡️ **Nível:** {st.session_state.user_role}")
-        
-        st.divider()
-        
-        # Botão dedicado para abrir a tela de Novo Registro e limpar seleções anteriores
-        if st.button("➕ Criar Novo Atendimento", use_container_width=True, type="secondary"):
-            st.session_state.tela_atual = "novo"
-            st.session_state.chamado_selecionado_id = None
-            st.rerun()
-            
-        st.divider()
-        st.subheader("⚠️ Chamados Ativos (Clique para Tratar)")
-        
-        if chamados_abertos:
-            for chamado in chamados_abertos:
-                resumo = gerar_resumo(chamado['solicitacao'])
-                label_botao = f"Nº {chamado['id']} - {chamado['morador']}\n💬 {resumo}"
-                
-                # Clicar aqui agora GARANTE a troca de tela sem travar no componente visual anterior
-                if st.button(label_botao, key=f"btn_{chamado['id']}", use_container_width=True):
-                    st.session_state.chamado_selecionado_id = chamado['id']
-                    st.session_state.tela_atual = "atualizar"
+def logout():
+    controller.remove("condo_user_id")
+    controller.remove("condo_user_email")
+    st.session_state.logged_in = False
+    st.session_state.user_info = None
+    st.rerun()
+
+def check_auth():
+    # Tenta ler cookies se não estiver logado na sessão
+    if not st.session_state.logged_in:
+        cookie_id = controller.get("condo_user_id")
+        if cookie_id:
+            try:
+                profile = supabase.table("perfis").select("*").eq("id", cookie_id).single().execute()
+                if profile.data:
+                    st.session_state.user_info = profile.data
+                    st.session_state.logged_in = True
                     st.rerun()
-        else:
-            st.info("Nenhum chamado pendente.")
-            
-        st.divider()
-        if st.button("Sair", use_container_width=True):
-            st.session_state.logado = False
-            st.rerun()
+            except:
+                pass
 
-    # ------------------ PAINEL PRINCIPAL ------------------
-    st.title("📋 Painel de Controle de Atendimentos")
+# --- INTERFACE DE LOGIN ---
+check_auth()
+
+if not st.session_state.logged_in:
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        st.title("🏢 CondoTickets")
+        st.subheader("Login no Sistema")
+        email = st.text_input("E-mail")
+        senha = st.text_input("Senha", type="password")
+        if st.button("Entrar", use_container_width=True):
+            login_user(email, senha)
+    st.stop()
+
+# --- ÁREA LOGADA ---
+user = st.session_state.user_info
+
+# --- SIDEBAR (DINÂMICA) ---
+with st.sidebar:
+    st.title(f"Olá, {user['email'].split('@')[0]}")
+    st.info(f"Nível: {user['nivel_acesso']}")
+    
+    if st.button("Sair"):
+        logout()
+    
     st.divider()
     
-    # ------------------ VISÃO DO ATENDENTE ------------------
-    if st.session_state.user_role == "Atendente":
+    if user['nivel_acesso'] == 'Atendente':
+        st.subheader("📌 Chamados Ativos")
+        res_ativos = supabase.table("atendimentos").select("id, morador, solicitacao").eq("etapa", "Em andamento").execute()
+        
+        if st.button("➕ Novo Atendimento", use_container_width=True):
+            st.session_state.view_modo = "Novo"
+            st.session_state.ticket_selecionado = None
+            st.rerun()
 
-        # TELA 1: NOVO ATENDIMENTO
-        if st.session_state.tela_atual == "novo":
-            st.subheader("📝 Registrar Novo Atendimento")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                # Usamos a chave de sessão 'value' para conseguir zerar o campo programaticamente
-                morador = st.text_input("Nome do Morador", value=st.session_state.form_morador, key="input_morador")
-                meio_contato = st.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
-            with col2:
-                etapa = st.selectbox("Etapa Inicial", ["Em andamento", "Concluído"])
-                
-            solicitacao = st.text_area("Solicitação (Descreva o que foi pedido)", value=st.session_state.form_solicitacao, key="input_solicitacao")
-            
-            if st.button("Salvar Registro", type="primary", use_container_width=True):
-                if morador and solicitacao:
-                    dados = {
-                        "usuario_id": st.session_state.user_id,
-                        "morador": morador,
-                        "meio_contato": meio_contato,
-                        "etapa": etapa,
-                        "solicitacao": solicitacao
-                    }
-                    supabase.table("atendimentos").insert(dados).execute()
-                    
-                    # SUCESSO! Agora limpamos as caixas de texto limpando o estado delas
-                    st.session_state.form_morador = ""
-                    st.session_state.form_solicitacao = ""
-                    
-                    st.success("Atendimento registrado com sucesso! O formulário foi limpo.")
-                    st.rerun() # Reinicia a página com os campos limpos
-                else:
-                    st.warning("Por favor, preencha o nome do morador e a solicitação.")
-                    
-        # TELA 2: ATUALIZAR CHAMADO
-        elif st.session_state.tela_atual == "atualizar":
-            if chamados_abertos:
-                opcoes_chamados = {f"Nº {c['id']} - {c['morador']}": c for c in chamados_abertos}
-                
-                index_padrao = 0
-                if st.session_state.chamado_selecionado_id:
-                    for i, (texto, ch) in enumerate(opcoes_chamados.items()):
-                        if ch['id'] == st.session_state.chamado_selecionado_id:
-                            index_padrao = i
-                            break
-                
-                selecionado = st.selectbox("Escolha o chamado para tratar:", list(opcoes_chamados.keys()), index=index_padrao)
-                chamado_atual = opcoes_chamados[selecionado]
-                
-                st.markdown("### 📄 Detalhes do Chamado Selecionado")
-                with st.container(border=True):
-                    st.markdown(f"**Morador:** {chamado_atual['morador']} | **Contato:** {chamado_atual['meio_contato']}")
-                    st.write(chamado_atual['solicitacao'])
-                
-                nova_atualizacao = st.text_area("Descreva a atualização ou andamento da situação:")
-                nova_etapa = st.selectbox("Mudar Status para:", ["Em andamento", "Concluído"], key="atualizar_status")
-                
-                if st.button("Gravar Atualização", type="secondary", use_container_width=True):
-                    if nova_atualizacao:
-                        texto_atualizado = f"{chamado_atual['solicitacao']}\n\n[Nova Atualização]: {nova_atualizacao}"
-                        
-                        supabase.table("atendimentos").update({
-                            "solicitacao": texto_atualizado,
-                            "etapa": nova_etapa
-                        }).eq("id", chamado_atual['id']).execute()
-                        
-                        # Limpa os estados de seleção e força o retorno para a tela de novo cadastro limpo
-                        st.session_state.chamado_selecionado_id = None
-                        st.session_state.tela_atual = "novo"
-                        st.session_state.form_morador = ""
-                        st.session_state.form_solicitacao = ""
-                        st.success("Chamado atualizado com sucesso!")
-                        st.rerun()
-                    else:
-                        st.warning("Escreva o que foi feito antes de salvar.")
-            else:
-                st.info("Não há chamados em andamento para atualizar no momento.")
-                st.session_state.tela_atual = "novo"
+        for t in res_ativos.data:
+            resumo = f"{t['morador']} - {t['solicitacao'][:20]}..."
+            if st.button(resumo, key=f"btn_{t['id']}", use_container_width=True):
+                st.session_state.ticket_selecionado = t['id']
+                st.session_state.view_modo = "Atualizar"
                 st.rerun()
 
-    # ------------------ VISÃO DO SUPERVISOR (DASHBOARD) ------------------
-    elif st.session_state.user_role == "Supervisor":
-        st.subheader("📊 Dashboard Executivo de Supervisão")
+# --- VISÃO: ATENDENTE ---
+if user['nivel_acesso'] == 'Atendente':
+    
+    if st.session_state.view_modo == "Novo":
+        st.title("📝 Novo Atendimento")
         
-        resposta = supabase.table("atendimentos").select("*, perfis(email)").execute()
+        with st.form("form_novo", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            morador = c1.text_input("Nome do Morador")
+            meio = c2.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
+            solicitacao = st.text_area("Descrição da Solicitação")
+            
+            if st.form_submit_button("Registrar Chamado"):
+                if morador and solicitacao:
+                    data = {
+                        "usuario_id": user['id'],
+                        "morador": morador,
+                        "meio_contato": meio,
+                        "solicitacao": solicitacao,
+                        "etapa": "Em andamento"
+                    }
+                    supabase.table("atendimentos").insert(data).execute()
+                    st.success("Chamado registrado com sucesso!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("Preencha todos os campos.")
+
+    elif st.session_state.view_modo == "Atualizar":
+        st.title("🔄 Atualizar Chamado")
+        tid = st.session_state.ticket_selecionado
+        res = supabase.table("atendimentos").select("*").eq("id", tid).single().execute()
+        chamado = res.data
         
-        if resposta.data:
-            df = pd.DataFrame(resposta.data)
-            df['Colaborador'] = df['perfis'].apply(lambda x: x['email'] if isinstance(x, dict) else 'Desconhecido')
-            df['Data'] = pd.to_datetime(df['data_hora']).dt.date
+        col_inf1, col_inf2 = st.columns(2)
+        col_inf1.metric("Morador", chamado['morador'])
+        col_inf2.metric("Abertura", datetime.fromisoformat(chamado['data_hora']).strftime("%d/%m/%Y %H:%M"))
+        
+        st.markdown("**Histórico Atual:**")
+        st.info(chamado['solicitacao'])
+        
+        with st.form("form_update"):
+            nova_att = st.text_area("Nova Atualização / Andamento")
+            nova_etapa = st.selectbox("Status", ["Em andamento", "Concluído"])
             
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total de Atendimentos", len(df))
-            m2.metric("Atendimentos Em Andamento", len(df[df['etapa'] == 'Em andamento']))
-            m3.metric("Atendimentos Concluídos", len(df[df['etapa'] == 'Concluído']))
-            
-            st.divider()
-            
-            g1, g2 = st.columns(2)
-            with g1:
-                st.markdown("### 👥 Atendimentos por Colaborador")
-                st.bar_chart(df['Colaborador'].value_counts())
-            with g2:
-                st.markdown("### 📞 Atendimentos por Meio de Contato")
-                st.bar_chart(df['meio_contato'].value_counts())
+            if st.form_submit_button("Salvar Alterações"):
+                historico_atualizado = f"{chamado['solicitacao']}\n\n--- Atualização ({datetime.now().strftime('%d/%m %H:%M')}) ---\n{nova_att}"
+                supabase.table("atendimentos").update({
+                    "solicitacao": historico_atualizado,
+                    "etapa": nova_etapa
+                }).eq("id", tid).execute()
                 
-            st.divider()
-            st.markdown("### 📅 Evolução Diária de Atendimentos")
-            st.line_chart(df.groupby('Data').size())
+                st.success("Chamado atualizado!")
+                time.sleep(1)
+                st.session_state.view_modo = "Novo"
+                st.rerun()
+
+# --- VISÃO: SUPERVISOR (DASHBOARD) ---
+elif user['nivel_acesso'] == 'Supervisor':
+    st.title("📊 Dashboard Executivo")
+    
+    # Busca dados
+    res_all = supabase.table("atendimentos").select("*, perfis(email)").execute()
+    df = pd.DataFrame(res_all.data)
+    
+    if not df.empty:
+        # Métricas
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total de Atendimentos", len(df))
+        m2.metric("Em Andamento", len(df[df['etapa'] == 'Em andamento']))
+        m3.metric("Concluídos", len(df[df['etapa'] == 'Concluído']))
+        
+        st.divider()
+        
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.subheader("Atendimentos por Colaborador")
+            # Extrai e-mail do objeto aninhado vindo do join
+            df['atendente'] = df['perfis'].apply(lambda x: x['email'] if x else 'N/A')
+            chart_colab = df['atendente'].value_counts()
+            st.bar_chart(chart_colab)
             
-            st.divider()
-            st.markdown("### 📑 Histórico Completo de Registros")
-            df_exibicao = df[['Data', 'Colaborador', 'morador', 'meio_contato', 'solicitacao', 'etapa']]
-            df_exibicao.columns = ['Data', 'Atendente', 'Morador', 'Meio de Contato', 'Histórico/Solicitação', 'Status']
-            st.dataframe(df_exibicao, use_container_width=True)
+        with c2:
+            st.subheader("Meio de Contato")
+            chart_meio = df['meio_contato'].value_counts()
+            st.bar_chart(chart_meio)
             
-        else:
-            st.info("Nenhum atendimento registrado no sistema para gerar o dashboard.")
+        st.subheader("Evolução Diária")
+        df['data'] = pd.to_datetime(df['data_hora']).dt.date
+        chart_evolucao = df.groupby('data').size()
+        st.line_chart(chart_evolucao)
+        
+        st.subheader("📋 Histórico Completo (Auditoria)")
+        st.dataframe(df[['id', 'data_hora', 'atendente', 'morador', 'meio_contato', 'etapa']], use_container_width=True)
+    else:
+        st.info("Nenhum dado encontrado para gerar o dashboard.")
