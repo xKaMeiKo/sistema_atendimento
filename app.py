@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import time
 from streamlit_autorefresh import st_autorefresh
 
@@ -94,7 +94,6 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
     
     col_esquerda, col_direita = st.columns([1, 3])
     
-    # COLUNA ESQUERDA: LISTA DE CHAMADOS FILTRADA COM CORES E HORÁRIOS
     with col_esquerda:
         sub_c1, sub_c2 = st.columns([3, 1])
         sub_c1.subheader("📌 Chamados")
@@ -102,7 +101,6 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
             st.rerun()
         
         try:
-            # Puxamos também a coluna data_hora para fazer o cálculo do tempo
             query = supabase.table("atendimentos").select("id, pessoa, solicitacao, categoria_solicitacao, data_hora").eq("etapa", "Em andamento")
             if cargo == "Manutenção":
                 query = query.eq("categoria_solicitacao", "Manutenção")
@@ -116,93 +114,87 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
 
         if dados_ativos:
             for t in dados_ativos:
-                # 1. TRATAMENTO E FORMATAÇÃO DA DATA/HORA
                 try:
-                    # Converte o texto do banco para um objeto de data real em Python
                     dt_abertura = datetime.fromisoformat(t['data_hora'].replace("Z", "+00:00"))
-                    
-                    # Formata para os padrões exigidos: dd/mm e 01h01
                     data_texto = dt_abertura.strftime("%d/%m")
                     hora_texto = dt_abertura.strftime("%Hh%M")
                     
-                    # 2. CÁLCULO DO ESPECTRO DE URGÊNCIA (TEMPO EM ABERTO)
                     agora = datetime.now(timezone.utc)
-                    diferenca = agora - dt_abertura
-                    horas_passadas = diferenca.total_seconds() / 3600
+                    horas_passadas = (agora - dt_abertura).total_seconds() / 3600
                     
-                    # Define a cor baseado no tempo solicitado
-                    if horas_passadas >= 4:
-                        status_cor = "🔴" # Mais de 4 horas sem fechar
-                    elif horas_passadas >= 2:
-                        status_cor = "🟠" # Entre 2 e 4 horas
-                    else:
-                        status_cor = "🟢" # Recente (menos de 2 horas)
+                    if horas_passadas >= 4: status_cor = "🔴"
+                    elif horas_passadas >= 2: status_cor = "🟠"
+                    else: status_cor = "🟢"
                 except:
-                    data_texto = "--/--"
-                    hora_texto = "--h--"
-                    status_cor = "⚪"
+                    data_texto, hora_texto, status_cor = "--/--", "--h--", "⚪"
 
-                # 3. MONTAGEM DA LABEL DO BOTÃO COMPLETA
-                # Formato: 🟢 Nº 12 - Lucas (Manutenção) [12/06 - 13h45]
                 label_completa = f"{status_cor} Nº {t['id']} - {t['pessoa']} ({t['categoria_solicitacao']}) [{data_texto} - {hora_texto}]"
-                
                 if st.button(label_completa, key=f"btn_{t['id']}", use_container_width=True):
                     st.session_state.ticket_selecionado = t['id']
                     st.session_state.view_modo = "Atualizar"
                     st.rerun()
         else:
-            st.info("Nenhum chamado pendente para o seu setor.")
+            st.info("Nenhum chamado pendente.")
             
-    # COLUNA DIREITA: CONTEÚDO DINÂMICO
     with col_direita:
         st.title("📋 Painel de Controle de Atendimentos")
         st.divider()
         
         if st.session_state.view_modo == "Aguardando":
-            st.info("💡 Selecione um chamado na lista ao lado para tratar ou clique em '➕ Novo Atendimento' na barra lateral. O painel se atualiza sozinho a cada 15 segundos.")
+            st.info("💡 Selecione um chamado na lista ao lado para tratar ou clique em '➕ Novo Atendimento'.")
 
         elif st.session_state.view_modo == "Novo":
             st.subheader("📝 Registrar Novo Atendimento")
             
-            with st.form("form_novo", clear_on_submit=True):
-                c1, c2 = st.columns(2)
-                pessoa = c1.text_input("Pessoa (Nome)")
-                tipo_persona = c2.selectbox("Tipo de Pessoa", ["Morador", "Prestador", "Hóspede", "Visitante"])
-                
-                c3, c4 = st.columns(2)
-                meio = c3.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
-                
-                indice_padrao_categoria = 0
-                if cargo == "Manutenção": indice_padrao_categoria = 2
-                elif cargo == "Financeiro": indice_padrao_categoria = 3
-                
-                categoria_solicitacao = c4.selectbox(
-                    "Tipo de Solicitação", 
-                    ["Liberação", "Informação", "Manutenção", "Financeiro"],
-                    index=indice_padrao_categoria
-                )
-                
-                etapa_inicial = st.selectbox("Status Inicial", ["Em andamento", "Concluído"])
-                solicitacao_detalhe = st.text_area("Descrição Detalhada da Solicitação")
-                
-                if st.form_submit_button("Registrar Chamado", type="primary"):
-                    if pessoa and solicitacao_detalhe:
-                        data = {
-                            "usuario_id": user['id'],
-                            "pessoa": pessoa,
-                            "tipo_pessoa": tipo_persona,
-                            "meio_contato": meio,
-                            "categoria_solicitacao": categoria_solicitacao,
-                            "solicitacao": solicitacao_detalhe,
-                            "etapa": etapa_inicial
-                        }
-                        supabase.table("atendimentos").insert(data).execute()
-                        st.success("Chamado registrado!")
-                        time.sleep(1)
-                        st.session_state.view_modo = "Novo" if cargo == "Atendente" else "Aguardando"
-                        st.rerun()
-                    else:
-                        st.warning("Preencha os campos obrigatórios.")
+            # Removemos o formulário agrupado tradicional para permitir o upload direto de arquivos sem travar o botão
+            c1, c2 = st.columns(2)
+            pessoa = c1.text_input("Pessoa (Nome)")
+            tipo_persona = c2.selectbox("Tipo de Pessoa", ["Morador", "Prestador", "Hóspede", "Visitante"])
+            
+            c3, c4 = st.columns(2)
+            meio = c3.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
+            
+            indice_padrao_categoria = 0
+            if cargo == "Manutenção": indice_padrao_categoria = 2
+            elif cargo == "Financeiro": indice_padrao_categoria = 3
+            
+            categoria_solicitacao = c4.selectbox("Tipo de Solicitação", ["Liberação", "Informação", "Manutenção", "Financeiro"], index=indice_padrao_categoria)
+            etapa_inicial = st.selectbox("Status Inicial", ["Em andamento", "Concluído"])
+            solicitacao_detalhe = st.text_area("Descrição Detalhada da Solicitação")
+            
+            # CAMPO DE ARQUIVO: Permite anexar fotos da ocorrência
+            foto_anexa = st.file_uploader("📸 Deseja anexar uma foto da ocorrência? (Opcional)", type=["png", "jpg", "jpeg"])
+            
+            if st.button("Registrar Chamado", type="primary", use_container_width=True):
+                if pessoa and solicitacao_detalhe:
+                    url_foto_final = None
+                    
+                    # Se o usuário enviou uma foto, faz o upload para a nuvem
+                    if foto_anexa:
+                        nome_arquivo = f"{int(time.time())}_{foto_anexa.name}"
+                        bytes_data = foto_anexa.getvalue()
+                        # Envia o arquivo para a pasta do Supabase
+                        supabase.storage.from_("arquivos_chamados").upload(nome_arquivo, bytes_data)
+                        # Pega o link público dela
+                        url_foto_final = supabase.storage.from_("arquivos_chamados").get_public_url(nome_arquivo)
+                    
+                    data = {
+                        "usuario_id": user['id'],
+                        "pessoa": pessoa,
+                        "tipo_pessoa": tipo_persona,
+                        "meio_contato": meio,
+                        "categoria_solicitacao": categoria_solicitacao,
+                        "solicitacao": solicitacao_detalhe,
+                        "etapa": etapa_inicial,
+                        "url_imagem": url_foto_final
+                    }
+                    supabase.table("atendimentos").insert(data).execute()
+                    st.success("Chamado registrado com sucesso!")
+                    time.sleep(1)
+                    st.session_state.view_modo = "Novo" if cargo == "Atendente" else "Aguardando"
+                    st.rerun()
+                else:
+                    st.warning("Preencha os campos obrigatórios (Nome e Descrição).")
 
         elif st.session_state.view_modo == "Atualizar":
             st.subheader("🔄 Atualizar Chamado")
@@ -223,6 +215,11 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 
                 st.markdown("**Histórico de Ocorrências:**")
                 st.info(chamado['solicitacao'])
+                
+                # SE O CHAMADO TIVER IMAGEM: Exibe ela na tela em tamanho médio
+                if chamado.get('url_imagem'):
+                    st.markdown("**📸 Foto da Ocorrência Anexada:**")
+                    st.image(chamado['url_imagem'], width=450)
                 
                 with st.form("form_update"):
                     nova_att = st.text_area("Descreva o andamento:")
@@ -284,4 +281,4 @@ elif cargo == 'Supervisor':
         colunas_existentes = [c for c in colunas_exibir if c in df_exibicao.columns]
         st.dataframe(df_exibicao[colunas_existentes], use_container_width=True)
     else:
-        st.info("Nenhum dado encontrado no banco para consolidar o painel gerencial.")
+        st.info("Nenhum dado encontrado no banco.")
