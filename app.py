@@ -3,6 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime, timezone
 import time
+import base64 # <--- Biblioteca para transformar imagem em texto
 from streamlit_autorefresh import st_autorefresh
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -58,6 +59,16 @@ def logout():
     st.session_state.view_modo = "Novo"
     st.session_state.ticket_selecionado = None
     st.rerun()
+
+# Conversor de Imagem para Base64 de forma limpa
+def converter_para_base64(arquivo_upload):
+    if arquivo_upload is not None:
+        bytes_data = arquivo_upload.getvalue()
+        extensao = arquivo_upload.name.split(".")[-1].lower()
+        if extensao == "jpg": extensao = "jpeg"
+        base64_texto = base64.b64encode(bytes_data).decode("utf-8")
+        return f"data:image/{extensao};base64,{base64_texto}"
+    return None
 
 # --- INTERFACE DE LOGIN ---
 if not st.session_state.logged_in:
@@ -173,18 +184,14 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
             
             if st.button("Registrar Chamado", type="primary", use_container_width=True):
                 if pessoa and solicitacao_detalhe:
-                    url_foto_final = None
                     
-                    if foto_anexa:
-                        nome_arquivo = f"{int(time.time())}_{foto_anexa.name}"
-                        bytes_data = foto_anexa.getvalue()
-                        supabase.storage.from_("arquivos_chamados").upload(nome_arquivo, bytes_data)
-                        url_foto_final = supabase.storage.from_("arquivos_chamados").get_public_url(nome_arquivo)
+                    # Converte a foto para texto Base64 de forma nativa e segura
+                    url_foto_final = converter_para_base64(foto_anexa)
                     
                     data = {
                         "usuario_id": user['id'],
                         "pessoa": pessoa,
-                        "tipo_pessoa": tipo_persona,
+                        "tipo_persona": tipo_persona,
                         "meio_contato": meio,
                         "categoria_solicitacao": categoria_solicitacao,
                         "solicitacao": solicitacao_detalhe,
@@ -227,7 +234,6 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                     st.markdown("**📸 Foto Atual da Ocorrência:**")
                     st.image(chamado['url_imagem'], width=450)
                 
-                # Mudamos o local do uploader para fora do st.form interno para evitar travamentos de envio
                 foto_atualizacao = st.file_uploader("📸 Deseja anexar uma nova foto/comprovante para este andamento?", type=["png", "jpg", "jpeg"], key="upload_att")
                 
                 with st.form("form_update"):
@@ -239,13 +245,11 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                             data_hora_agora = datetime.now().strftime('%d/%m %H:%M')
                             historico_updated = f"{chamado['solicitacao']}\n\n--- Atualização ({data_hora_agora}) por [{nome_usuario_limpo} - {cargo}] ---\n{nova_att}"
                             
-                            url_foto_final = chamado.get('url_imagem') # Mantém a antiga se não enviar uma nova
-                            
+                            # Se enviou foto nova, converte para texto. Se não, preserva a foto antiga.
                             if foto_atualizacao:
-                                nome_arquivo = f"{int(time.time())}_{foto_atualizacao.name}"
-                                bytes_data = foto_atualizacao.getvalue()
-                                supabase.storage.from_("arquivos_chamados").upload(nome_arquivo, bytes_data)
-                                url_foto_final = supabase.storage.from_("arquivos_chamados").get_public_url(nome_arquivo)
+                                url_foto_final = converter_para_base64(foto_atualizacao)
+                            else:
+                                url_foto_final = chamado.get('url_imagem')
                             
                             supabase.table("atendimentos").update({
                                 "solicitacao": historico_updated,
