@@ -125,4 +125,4 @@ if user['nivel_acesso'] == 'Atendente':
                     }
                     supabase.table("atendimentos").insert(data).execute()
                     st.success("Chamado registrado com sucesso!")
-                    time.sleep(
+                    time.sleep()
