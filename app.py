@@ -3,9 +3,10 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
 import time
+from streamlit_autorefresh import st_autorefresh
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="CondoTickets SaaS", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="Condomínio Lake Side", layout="wide", page_icon="🏢")
 
 # --- CONEXÃO SUPABASE ---
 SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
@@ -56,7 +57,7 @@ def logout():
 if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        st.title("🏢 CondoTickets")
+        st.title("🏢 Lake Side")
         st.subheader("Login no Sistema")
         email = st.text_input("E-mail")
         senha = st.text_input("Senha", type="password")
