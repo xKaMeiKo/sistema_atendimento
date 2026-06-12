@@ -183,7 +183,7 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
             foto_anexa = st.file_uploader("📸 Deseja anexar uma foto da ocorrência? (Opcional)", type=["png", "jpg", "jpeg"], key="upload_novo")
             
             if st.button("Registrar Chamado", type="primary", use_container_width=True):
-                if pessoa and solicitacao_detalhe:
+                if ...:
                     
                     base64_foto = converter_para_base64(foto_anexa)
                     url_foto_final = None
@@ -215,12 +215,30 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                     st.warning("Preencha os campos obrigatórios (Nome e Descrição).")
 
         elif st.session_state.view_modo == "Atualizar":
-            st.subheader("🔄 Atualizar Chamado")
             tid = st.session_state.ticket_selecionado
             
             if tid:
                 res = supabase.table("atendimentos").select("*").eq("id", tid).single().execute()
                 chamado = res.data
+                
+                # --- GERAÇÃO DINÂMICA DO TÍTULO IGUAL AO MENU ESQUERDO ---
+                try:
+                    dt_abertura = datetime.fromisoformat(chamado['data_hora'].replace("Z", "+00:00"))
+                    data_texto = dt_abertura.strftime("%d/%m")
+                    hora_texto = dt_abertura.strftime("%Hh%M")
+                    
+                    agora = datetime.now(timezone.utc)
+                    horas_passadas = (agora - dt_abertura).total_seconds() / 3600
+                    
+                    if horas_passadas >= 4: status_cor = "🔴"
+                    elif horas_passadas >= 2: status_cor = "🟠"
+                    else: status_cor = "🟢"
+                except:
+                    data_texto, hora_texto, status_cor = "--/--", "--h--", "⚪"
+                
+                titulo_dinamico_chamado = f"{status_cor} Nº {chamado['id']} - {chamado['pessoa']} ({chamado.get('categoria_solicitacao', 'Geral')}) [{data_texto} - {hora_texto}]"
+                st.subheader(titulo_dinamico_chamado)
+                # --------------------------------------------------------
                 
                 col_inf1, col_inf2, col_inf3 = st.columns(3)
                 col_inf1.metric("Pessoa", chamado['pessoa'])
@@ -258,14 +276,10 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                     
                     if st.form_submit_button("Gravar Alterações", type="primary"):
                         if nova_att:
-                            # Contagem inteligente de atualizações passadas para definir o número atual (ex: 1º Atualização)
                             historico_antigo = chamado['solicitacao']
                             numero_atualizacao = historico_antigo.count("Atualização") + 1
-                            
-                            # Formatação da data e hora solicitada (Ex: 12/06 às 18h16)
                             data_hora_agora = datetime.now().strftime('%d/%m às %Hh%M')
                             
-                            # Nova linha exatamente no formato solicitado: 1º Atualização - 12/06 às 18h16 - manutencao - Acompanhando a tratativa.
                             nova_linha_historico = f"\n\n{numero_atualizacao}º Atualização - {data_hora_agora} - {nome_usuario_limpo} - {nova_att}"
                             historico_updated = f"{historico_antigo}{nova_linha_historico}"
                             
