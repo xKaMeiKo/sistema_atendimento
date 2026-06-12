@@ -3,10 +3,10 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
 import time
-from streamlit_autorefresh import st_autorefresh
+from streamlit_autorefresh import st_autorefresh # <--- Importa o cronômetro seguro
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Condomínio Lake Side", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="CondoTickets SaaS", layout="wide", page_icon="🏢")
 
 # --- CONEXÃO SUPABASE ---
 SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
@@ -57,18 +57,22 @@ def logout():
 if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
-        st.title("🏢 Lake Side")
+        st.title("🏢 CondoTickets")
         st.subheader("Login no Sistema")
         email = st.text_input("E-mail")
         senha = st.text_input("Senha", type="password")
         if st.button("Entrar", use_container_width=True):
-            login_user(email, senha)
+            login_user(email, senate)
     st.stop()
 
 # --- ÁREA LOGADA ---
 user = st.session_state.user_info
 nome_usuario_limpo = user['email'].split('@')[0] 
 cargo = user['nivel_acesso']
+
+# --- ATIVAÇÃO DO CRONÔMETRO AUTOMÁTICO ---
+# Atualiza a página inteira silenciosamente a cada 15000 milissegundos (15 segundos)
+st_autorefresh(interval=15000, key="condotickets_refresh")
 
 # --- BARRA LATERAL FIXA ---
 with st.sidebar:
@@ -89,14 +93,13 @@ with st.sidebar:
 # --- PAINEL PRINCIPAL OPERACIONAL ---
 if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
     
-    # Criamos o layout clássico de duas colunas na tela central
     col_esquerda, col_direita = st.columns([1, 3])
     
     # COLUNA ESQUERDA: LISTA DE CHAMADOS FILTRADA
     with col_esquerda:
         sub_c1, sub_c2 = st.columns([3, 1])
         sub_c1.subheader("📌 Chamados")
-        if sub_c2.button("🔄", help="Atualizar lista"):
+        if sub_c2.button("🔄", help="Atualizar lista agora"):
             st.rerun()
         
         try:
@@ -127,7 +130,7 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
         st.divider()
         
         if st.session_state.view_modo == "Aguardando":
-            st.info("💡 Selecione um chamado na lista ao lado para tratar ou clique em '➕ Novo Atendimento' na barra lateral.")
+            st.info("💡 Selecione um chamado na lista ao lado para tratar ou clique em '➕ Novo Atendimento' na barra lateral. O painel se atualiza sozinho a cada 15 segundos.")
 
         elif st.session_state.view_modo == "Novo":
             st.subheader("📝 Registrar Novo Atendimento")
