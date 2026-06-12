@@ -62,7 +62,7 @@ if not st.session_state.logged_in:
         email = st.text_input("E-mail")
         senha = st.text_input("Senha", type="password")
         if st.button("Entrar", use_container_width=True):
-            login_user(email, password)
+            login_user(email, senha)
     st.stop()
 
 # --- ÁREA LOGADA ---
