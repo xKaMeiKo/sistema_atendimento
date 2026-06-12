@@ -189,8 +189,7 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                     url_foto_final = None
                     
                     if base64_foto:
-                        # Salva no formato estruturado: Imagem::Usuario::DataHora
-                        data_hora_criacao = datetime.now().strftime('%d/%m %H:%M')
+                        data_hora_criacao = datetime.now().strftime('%d/%m às %Hh%M')
                         url_foto_final = f"{base64_foto}::{nome_usuario_limpo}::{data_hora_criacao}"
                     
                     data = {
@@ -235,19 +234,16 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 st.markdown("**Histórico de Ocorrências:**")
                 st.info(chamado['solicitacao'])
                 
-                # --- PROCESSAMENTO DA GALERIA EXTRAÍDA ---
                 if chamado.get('url_imagem'):
                     st.markdown("**📸 Fotos do Histórico:**")
                     blocos_fotos = chamado['url_imagem'].split("||")
                     
                     for idx, bloco in enumerate(blocos_fotos):
-                        # Tenta quebrar o bloco estruturado para extrair os metadados
                         partes = bloco.split("::")
                         if len(partes) == 3:
                             string_foto, usuario_upload, data_upload = partes
                             titulo_expander = f"🖼️ Anexo por [{usuario_upload}] em ({data_upload})"
                         else:
-                            # Proteção caso existam chamados antigos criados antes dessa atualização
                             string_foto = bloco
                             titulo_expander = f"🖼️ Anexo Antigo #{idx + 1}"
                             
@@ -262,14 +258,21 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                     
                     if st.form_submit_button("Gravar Alterações", type="primary"):
                         if nova_att:
-                            data_hora_agora = datetime.now().strftime('%d/%m %H:%M')
-                            historico_updated = f"{chamado['solicitacao']}\n\n--- Atualização ({data_hora_agora}) por [{nome_usuario_limpo} - {cargo}] ---\n{nova_att}"
+                            # Contagem inteligente de atualizações passadas para definir o número atual (ex: 1º Atualização)
+                            historico_antigo = chamado['solicitacao']
+                            numero_atualizacao = historico_antigo.count("Atualização") + 1
+                            
+                            # Formatação da data e hora solicitada (Ex: 12/06 às 18h16)
+                            data_hora_agora = datetime.now().strftime('%d/%m às %Hh%M')
+                            
+                            # Nova linha exatamente no formato solicitado: 1º Atualização - 12/06 às 18h16 - manutencao - Acompanhando a tratativa.
+                            nova_linha_historico = f"\n\n{numero_atualizacao}º Atualização - {data_hora_agora} - {nome_usuario_limpo} - {nova_att}"
+                            historico_updated = f"{historico_antigo}{nova_linha_historico}"
                             
                             url_foto_existente = chamado.get('url_imagem')
                             base64_nova_foto = converter_para_base64(foto_atualizacao)
                             
                             if base64_nova_foto:
-                                # Monta o novo bloco estruturado: Imagem::Usuario::DataHora
                                 novo_bloco = f"{base64_nova_foto}::{nome_usuario_limpo}::{data_hora_agora}"
                                 if url_foto_existente:
                                     url_foto_final = f"{url_foto_existente}||{novo_bloco}"
