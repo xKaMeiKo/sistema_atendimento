@@ -195,25 +195,29 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                     data = {
                         "usuario_id": user['id'],
                         "pessoa": pessoa,
-                        "tipo_persona": tipo_persona,
+                        "tipo_pessoa": tipo_persona,
                         "meio_contato": meio,
                         "categoria_solicitacao": categoria_solicitacao,
                         "solicitacao": solicitacao_detalhe,
                         "etapa": etapa_inicial,
                         "url_imagem": url_foto_final
                     }
-                    supabase.table("atendimentos").insert(data).execute()
                     
-                    st.session_state.form_pessoa = ""
-                    st.session_state.form_solicitacao = ""
-                    
-                    st.success("Chamado registrado com sucesso!")
-                    time.sleep(1)
-                    st.session_state.view_modo = "Novo" if cargo == "Atendente" else "Aguardando"
-                    st.rerun()
+                    # CAPTURA DE ERRO DETALHADA PARA DIAGNÓSTICO
+                    try:
+                        supabase.table("atendimentos").insert(data).execute()
+                        st.session_state.form_pessoa = ""
+                        st.session_state.form_solicitacao = ""
+                        st.success("Chamado registrado com sucesso!")
+                        time.sleep(1)
+                        st.session_state.view_modo = "Novo" if cargo == "Atendente" else "Aguardando"
+                        st.rerun()
+                    except Exception as e:
+                        st.error("🚨 DETALHE REAL DO ERRO DO SUPABASE:")
+                        st.code(str(e)) # Isso vai mostrar o motivo real na tela!
                 else:
                     st.warning("Preencha os campos obrigatórios (Nome e Descrição).")
-
+                    
         elif st.session_state.view_modo == "Atualizar":
             tid = st.session_state.ticket_selecionado
             
