@@ -100,22 +100,27 @@ with st.sidebar:
     
     st.divider()
     
+    # Menu de Navegação de Visualização
+    st.subheader("📁 Navegação")
+    menu_foco = st.radio("Exibir chamados:", ["Operação (Ativos)", "Histórico (Concluídos)"], key="menu_lateral_navegacao")
+    
+    st.divider()
+    
     if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
         if st.button("➕ Novo Atendimento", use_container_width=True, type="primary"):
             st.session_state.view_modo = "Novo"
             st.session_state.ticket_selecionado = None
             st.rerun()
 
-# --- PAINEL PRINCIPAL OPERACIONAL ---
-if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
+# --- FLUXO 1: VISÃO OPERACIONAL (CHAMADOS ATIVOS) ---
+if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção', 'Financeiro']:
     
     col_esquerda, col_direita = st.columns([1, 3])
     
-    # COLUNA ESQUERDA: LISTA DE CHAMADOS FILTRADA
     with col_esquerda:
         sub_c1, sub_c2 = st.columns([3, 1])
         sub_c1.subheader("📌 Chamados")
-        if sub_c2.button("🔄", help="Atualizar lista agora"):
+        if sub_c2.button("🔄", key="btn_refresh_ativos"):
             st.rerun()
         
         try:
@@ -154,13 +159,12 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
         else:
             st.info("Nenhum chamado pendente.")
             
-    # COLUNA DIREITA: CONTEÚDO DINÂMICO
     with col_direita:
         st.title("📋 Painel de Controle de Atendimentos")
         st.divider()
         
         if st.session_state.view_modo == "Aguardando":
-            st.info("💡 Selecione um chamado na lista ao lado para tratar ou clique em '➕ Novo Atendimento' na barra lateral.")
+            st.info("💡 Selecione um chamado na lista ao lado para tratar ou clique em '➕ Novo Atendimento'.")
 
         elif st.session_state.view_modo == "Novo":
             st.subheader("📝 Registrar Novo Atendimento")
@@ -184,7 +188,6 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
             
             if st.button("Registrar Chamado", type="primary", use_container_width=True):
                 if pessoa and solicitacao_detalhe:
-                    
                     base64_foto = converter_para_base64(foto_anexa)
                     url_foto_final = None
                     
@@ -195,7 +198,7 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                     data = {
                         "usuario_id": user['id'],
                         "pessoa": pessoa,
-                        "tipo_pessoa": tipo_persona,
+                        "tipo_persona": tipo_persona,
                         "meio_contato": meio,
                         "categoria_solicitacao": categoria_solicitacao,
                         "solicitacao": solicitacao_detalhe,
@@ -203,7 +206,6 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                         "url_imagem": url_foto_final
                     }
                     
-                    # CAPTURA DE ERRO DETALHADA PARA DIAGNÓSTICO
                     try:
                         supabase.table("atendimentos").insert(data).execute()
                         st.session_state.form_pessoa = ""
@@ -213,11 +215,11 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                         st.session_state.view_modo = "Novo" if cargo == "Atendente" else "Aguardando"
                         st.rerun()
                     except Exception as e:
-                        st.error("🚨 DETALHE REAL DO ERRO DO SUPABASE:")
-                        st.code(str(e)) # Isso vai mostrar o motivo real na tela!
+                        st.error("🚨 Erro ao salvar no banco:")
+                        st.code(str(e))
                 else:
                     st.warning("Preencha os campos obrigatórios (Nome e Descrição).")
-                    
+
         elif st.session_state.view_modo == "Atualizar":
             tid = st.session_state.ticket_selecionado
             
@@ -225,7 +227,6 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 res = supabase.table("atendimentos").select("*").eq("id", tid).single().execute()
                 chamado = res.data
                 
-                # Gera dinamicamente o título igual ao menu esquerdo
                 try:
                     dt_abertura = datetime.fromisoformat(chamado['data_hora'].replace("Z", "+00:00"))
                     data_texto = dt_abertura.strftime("%d/%m")
@@ -255,11 +256,9 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 st.markdown("**Histórico de Ocorrências:**")
                 st.info(chamado['solicitacao'])
                 
-                # Exibição das fotos salvas em formato Base64 com expander descritivo
                 if chamado.get('url_imagem'):
                     st.markdown("**📸 Fotos do Histórico:**")
                     blocos_fotos = chamado['url_imagem'].split("||")
-                    
                     for idx, bloco in enumerate(blocos_fotos):
                         partes = bloco.split("::")
                         if len(partes) == 3:
@@ -308,12 +307,74 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                             st.success("Atualizado!")
                             time.sleep(1)
                             st.session_state.ticket_selecionado = None
-                            st.session_state.view_modo = "Novo" if cargo == "Atendente" else "Aguardando"
+                            st.session_state.view_modo = "Aguardando"
                             st.rerun()
                         else:
                             st.warning("Insira uma descrição.")
             else:
                 st.info("Selecione um chamado na lista lateral.")
+
+# --- FLUXO 2: HISTÓRICO DE CONCLUÍDOS (TELA LADO A LADO - EM GRADE) ---
+elif menu_foco == "Histórico (Concluídos)" and cargo in ['Atendente', 'Manutenção', 'Financeiro']:
+    st.title("🗃️ Arquivo Geral de Chamados Concluídos")
+    st.markdown("Veja abaixo todos os atendimentos finalizados do seu respectivo departamento comercial.")
+    st.divider()
+
+    try:
+        # Puxa apenas chamados com a etapa igual a 'Concluído'
+        query_f = supabase.table("atendimentos").select("*").eq("etapa", "Concluído")
+        if cargo == "Manutenção":
+            query_f = query_f.eq("categoria_solicitacao", "Manutenção")
+        elif cargo == "Financeiro":
+            query_f = query_f.eq("categoria_solicitacao", "Financeiro")
+            
+        res_concluidos = query_f.order("id", desc=True).execute()
+        dados_concluidos = res_concluidos.data
+    except Exception:
+        dados_concluidos = []
+
+    if dados_concluidos:
+        # Define quantas colunas queremos lado a lado (ex: 3 colunas por linha)
+        num_colunas = 3
+        colunas_grade = st.columns(num_colunas)
+        
+        for idx, c in enumerate(dados_concluidos):
+            # Distribui os chamados sequencialmente entre as colunas lado a lado
+            with colunas_grade[idx % num_colunas]:
+                # Estilização básica em bloco usando os containers nativos do Streamlit
+                with st.container(border=True):
+                    st.markdown(f"### ✅ Chamado Nº {c['id']}")
+                    st.markdown(f"**Pessoa:** {c['pessoa']} ({c.get('tipo_pessoa', 'N/A')})")
+                    st.markdown(f"**Setor:** `{c['categoria_solicitacao']}` | **Via:** {c.get('meio_contato', 'N/A')}")
+                    
+                    # Formata a data de abertura curta
+                    try:
+                        dt_ab = datetime.fromisoformat(c['data_hora'].replace("Z", "+00:00")).strftime("%d/%m %H:%M")
+                        st.markdown(f"📅 *Aberto em: {dt_ab}*")
+                    except:
+                        pass
+                    
+                    # Coloca o histórico de andamento compactado para não estourar a tela
+                    with st.expander("📝 Ver Histórico Textual"):
+                        st.text(c['solicitacao'])
+                    
+                    # Mostra a galeria de fotos associada àquela finalização
+                    if c.get('url_imagem'):
+                        with st.expander("📸 Ver Imagens Anexadas"):
+                            blocos_f = c['url_imagem'].split("||")
+                            for sub_bloco in blocos_f:
+                                partes = sub_bloco.split("::")
+                                img_src = partes[0] if len(partes) == 3 else sub_bloco
+                                st.image(img_src, use_container_width=True)
+                    
+                    # Botão para reabrir o chamado caso necessário
+                    if st.button("🔄 Reabrir Chamado", key=f"reabrir_{c['id']}", use_container_width=True):
+                        supabase.table("atendimentos").update({"etapa": "Em andamento"}).eq("id", c['id']).execute()
+                        st.success(f"Nº {c['id']} reaberto!")
+                        time.sleep(0.5)
+                        st.rerun()
+    else:
+        st.info("Nenhum chamado concluído encontrado para o seu setor.")
 
 # --- FLUXO 3: VISÃO DO SUPERVISOR ---
 elif cargo == 'Supervisor':
