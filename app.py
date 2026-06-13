@@ -183,7 +183,7 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
             foto_anexa = st.file_uploader("📸 Deseja anexar uma foto da ocorrência? (Opcional)", type=["png", "jpg", "jpeg"], key="upload_novo")
             
             if st.button("Registrar Chamado", type="primary", use_container_width=True):
-                if ...:
+                if pessoa and solicitacao_detalhe:
                     
                     base64_foto = converter_para_base64(foto_anexa)
                     url_foto_final = None
@@ -221,7 +221,7 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 res = supabase.table("atendimentos").select("*").eq("id", tid).single().execute()
                 chamado = res.data
                 
-                # --- GERAÇÃO DINÂMICA DO TÍTULO IGUAL AO MENU ESQUERDO ---
+                # Gera dinamicamente o título igual ao menu esquerdo
                 try:
                     dt_abertura = datetime.fromisoformat(chamado['data_hora'].replace("Z", "+00:00"))
                     data_texto = dt_abertura.strftime("%d/%m")
@@ -238,7 +238,6 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 
                 titulo_dinamico_chamado = f"{status_cor} Nº {chamado['id']} - {chamado['pessoa']} ({chamado.get('categoria_solicitacao', 'Geral')}) [{data_texto} - {hora_texto}]"
                 st.subheader(titulo_dinamico_chamado)
-                # --------------------------------------------------------
                 
                 col_inf1, col_inf2, col_inf3 = st.columns(3)
                 col_inf1.metric("Pessoa", chamado['pessoa'])
@@ -252,6 +251,7 @@ if cargo in ['Atendente', 'Manutenção', 'Financeiro']:
                 st.markdown("**Histórico de Ocorrências:**")
                 st.info(chamado['solicitacao'])
                 
+                # Exibição das fotos salvas em formato Base64 com expander descritivo
                 if chamado.get('url_imagem'):
                     st.markdown("**📸 Fotos do Histórico:**")
                     blocos_fotos = chamado['url_imagem'].split("||")
