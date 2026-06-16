@@ -10,8 +10,8 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="CondoTickets SaaS", layout="wide", page_icon="🏢")
 
 # --- CONEXÃO SUPABASE ---
-SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
-SUPABASE_KEY = "sb_publishable_EFjZ74m8m8bxBFYiNhvjaA_aIyGzRS8"
+SUPABASE_URL = "SUA_URL_AQUI"
+SUPABASE_KEY = "SUA_KEY_AQUI"
 
 @st.cache_resource
 def init_connection():
@@ -111,16 +111,20 @@ with st.sidebar:
             st.session_state.ticket_selecionado = None
             st.rerun()
 
-# --- FLUXO 1: VISÃO OPERACIONAL (CHAMADOS ATIVOS) ---
+# --- FLUXO 1: VISÃO OPERACIONAL (CHAMADOS ATIVOS COM BUSCA LATERAL) ---
 if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção', 'Financeiro']:
     
     col_esquerda, col_direita = st.columns([1, 3])
     
+    # COLUNA ESQUERDA: LISTA DE CHAMADOS FILTRADA
     with col_esquerda:
         sub_c1, sub_c2 = st.columns([3, 1])
         sub_c1.subheader("📌 Chamados")
         if sub_c2.button("🔄", key="btn_refresh_ativos"):
             st.rerun()
+        
+        # --- ADICIONADO: BARRA DE PESQUISA PARA FILTRAR OS CHAMADOS ATIVOS ---
+        busca_ativo = st.text_input("🔍 Buscar ativo:", placeholder="Nº, nome ou unidade...", key="txt_busca_ativos_lateral")
         
         try:
             query = supabase.table("atendimentos").select("id, pessoa, solicitacao, categoria_solicitacao, data_hora").eq("etapa", "Em andamento")
@@ -135,26 +139,44 @@ if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção',
             dados_ativos = []
 
         if dados_ativos:
-            for t in dados_ativos:
-                try:
-                    dt_abertura = datetime.fromisoformat(t['data_hora'].replace("Z", "+00:00"))
-                    data_texto = dt_abertura.strftime("%d/%m")
-                    hora_texto = dt_abertura.strftime("%Hh%M")
+            # Lógica de filtragem em tempo real na lista lateral
+            if busca_ativo:
+                dados_ativos_filtrados = []
+                for t in dados_ativos:
+                    termo_lateral = busca_ativo.lower().strip()
+                    id_txt = str(t['id'])
+                    pessoa_txt = t['pessoa'].lower() if t['pessoa'] else ""
+                    setor_txt = t['categoria_solicitacao'].lower() if t['categoria_solicitacao'] else ""
                     
-                    agora = datetime.now(timezone.utc)
-                    horas_passadas = (agora - dt_abertura).total_seconds() / 3600
-                    
-                    if horas_passadas >= 4: status_cor = "🔴"
-                    elif horas_passadas >= 2: status_cor = "🟠"
-                    else: status_cor = "🟢"
-                except:
-                    data_texto, hora_texto, status_cor = "--/--", "--h--", "⚪"
+                    if termo_lateral in id_txt or termo_lateral in pessoa_txt or termo_lateral in setor_txt:
+                        dados_ativos_filtrados = dados_ativos_filtrados + [t]
+            else:
+                dados_ativos_filtrados = dados_ativos
 
-                label_completa = f"{status_cor} Nº {t['id']} - {t['pessoa']} ({t['categoria_solicitacao']}) [{data_texto} - {hora_texto}]"
-                if st.button(label_completa, key=f"btn_{t['id']}", use_container_width=True):
-                    st.session_state.ticket_selecionado = t['id']
-                    st.session_state.view_modo = "Atualizar"
-                    st.rerun()
+            # Renderização dos botões com base na busca
+            if dados_ativos_filtrados:
+                for t in dados_ativos_filtrados:
+                    try:
+                        dt_abertura = datetime.fromisoformat(t['data_hora'].replace("Z", "+00:00"))
+                        data_texto = dt_abertura.strftime("%d/%m")
+                        hora_texto = dt_abertura.strftime("%Hh%M")
+                        
+                        agora = datetime.now(timezone.utc)
+                        horas_passadas = (agora - dt_abertura).total_seconds() / 3600
+                        
+                        if horas_passadas >= 4: status_cor = "🔴"
+                        elif horas_passadas >= 2: status_cor = "🟠"
+                        else: status_cor = "🟢"
+                    except:
+                        data_texto, hora_texto, status_cor = "--/--", "--h--", "⚪"
+
+                    label_completa = f"{status_cor} Nº {t['id']} - {t['pessoa']} ({t['categoria_solicitacao']}) [{data_texto} - {hora_texto}]"
+                    if st.button(label_completa, key=f"btn_{t['id']}", use_container_width=True):
+                        st.session_state.ticket_selecionado = t['id']
+                        st.session_state.view_modo = "Atualizar"
+                        st.rerun()
+            else:
+                st.info("Nenhum ativo encontrado.")
         else:
             st.info("Nenhum chamado pendente.")
             
@@ -172,7 +194,6 @@ if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção',
             pessoa_input = c1.text_input("Pessoa (Nome)", value=st.session_state.form_pessoa, key="txt_pessoa")
             tipo_persona = c2.selectbox("Tipo de Pessoa", ["Morador", "Prestador", "Hóspede", "Visitante"])
             
-            # --- ADICIONADO: CAMPO UNIFICADO DE PADRÃO DO CONDOMÍNIO ---
             unidade_info = ""
             if tipo_persona == "Morador":
                 unidade = st.text_input("Unidade (Ex: B402)", key="txt_unidade", max_chars=10)
@@ -201,7 +222,6 @@ if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção',
                         data_hora_criacao = datetime.now().strftime('%d/%m às %Hh%M')
                         url_foto_final = f"{base64_foto}::{nome_usuario_limpo}::{data_hora_criacao}"
                     
-                    # Concatena o nome do morador com o padrão solicitado (ex: Carlos Silva [B402])
                     nome_final_banco = f"{pessoa_input}{unidade_info}"
                     
                     data = {
@@ -328,7 +348,6 @@ elif menu_foco == "Histórico (Concluídos)" and cargo in ['Atendente', 'Manuten
     st.title("🗃️ Arquivo Geral de Chamados Concluídos")
     st.markdown("Veja abaixo todos os atendimentos finalizados. Use o campo de busca para filtrar por nome, unidade, setor ou número.")
     
-    # Barra de pesquisa que pega tudo (inclusive o formato B402 que foi inserido junto à coluna pessoa)
     busca = st.text_input("🔍 Pesquisar por Nome/Unidade, Setor ou Número do Chamado:", placeholder="Digite para buscar (Ex: B402, Hidráulica, 12)...")
     st.divider()
 
