@@ -100,7 +100,6 @@ with st.sidebar:
     
     st.divider()
     
-    # Menu de Navegação de Visualização
     st.subheader("📁 Navegação")
     menu_foco = st.radio("Exibir chamados:", ["Operação (Ativos)", "Histórico (Concluídos)"], key="menu_lateral_navegacao")
     
@@ -170,8 +169,15 @@ if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção',
             st.subheader("📝 Registrar Novo Atendimento")
             
             c1, c2 = st.columns(2)
-            pessoa = c1.text_input("Pessoa (Nome)", value=st.session_state.form_pessoa, key="txt_pessoa")
+            pessoa_input = c1.text_input("Pessoa (Nome)", value=st.session_state.form_pessoa, key="txt_pessoa")
             tipo_persona = c2.selectbox("Tipo de Pessoa", ["Morador", "Prestador", "Hóspede", "Visitante"])
+            
+            # --- ADICIONADO: CAMPO UNIFICADO DE PADRÃO DO CONDOMÍNIO ---
+            unidade_info = ""
+            if tipo_persona == "Morador":
+                unidade = st.text_input("Unidade (Ex: B402)", key="txt_unidade", max_chars=10)
+                if unidade:
+                    unidade_info = f" [{unidade.upper().strip()}]"
             
             c3, c4 = st.columns(2)
             meio = c3.selectbox("Meio de Contato", ["WhatsApp", "Telefone", "Pessoalmente"])
@@ -187,7 +193,7 @@ if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção',
             foto_anexa = st.file_uploader("📸 Deseja anexar uma foto da ocorrência? (Opcional)", type=["png", "jpg", "jpeg"], key="upload_novo")
             
             if st.button("Registrar Chamado", type="primary", use_container_width=True):
-                if pessoa and solicitacao_detalhe:
+                if pessoa_input and solicitacao_detalhe:
                     base64_foto = converter_para_base64(foto_anexa)
                     url_foto_final = None
                     
@@ -195,10 +201,13 @@ if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção',
                         data_hora_criacao = datetime.now().strftime('%d/%m às %Hh%M')
                         url_foto_final = f"{base64_foto}::{nome_usuario_limpo}::{data_hora_criacao}"
                     
+                    # Concatena o nome do morador com o padrão solicitado (ex: Carlos Silva [B402])
+                    nome_final_banco = f"{pessoa_input}{unidade_info}"
+                    
                     data = {
                         "usuario_id": user['id'],
-                        "pessoa": pessoa,
-                        "tipo_persona": tipo_persona,
+                        "pessoa": nome_final_banco,
+                        "tipo_pessoa": tipo_persona,
                         "meio_contato": meio,
                         "categoria_solicitacao": categoria_solicitacao,
                         "solicitacao": solicitacao_detalhe,
@@ -314,14 +323,16 @@ if menu_foco == "Operação (Ativos)" and cargo in ['Atendente', 'Manutenção',
             else:
                 st.info("Selecione um chamado na lista lateral.")
 
-# --- FLUXO 2: HISTÓRICO DE CONCLUÍDOS (TELA LADO A LADO - EM GRADE) ---
+# --- FLUXO 2: HISTÓRICO DE CONCLUÍDOS ---
 elif menu_foco == "Histórico (Concluídos)" and cargo in ['Atendente', 'Manutenção', 'Financeiro']:
     st.title("🗃️ Arquivo Geral de Chamados Concluídos")
-    st.markdown("Veja abaixo todos os atendimentos finalizados do seu respectivo departamento comercial.")
+    st.markdown("Veja abaixo todos os atendimentos finalizados. Use o campo de busca para filtrar por nome, unidade, setor ou número.")
+    
+    # Barra de pesquisa que pega tudo (inclusive o formato B402 que foi inserido junto à coluna pessoa)
+    busca = st.text_input("🔍 Pesquisar por Nome/Unidade, Setor ou Número do Chamado:", placeholder="Digite para buscar (Ex: B402, Hidráulica, 12)...")
     st.divider()
 
     try:
-        # Puxa apenas chamados com a etapa igual a 'Concluído'
         query_f = supabase.table("atendimentos").select("*").eq("etapa", "Concluído")
         if cargo == "Manutenção":
             query_f = query_f.eq("categoria_solicitacao", "Manutenção")
@@ -334,45 +345,54 @@ elif menu_foco == "Histórico (Concluídos)" and cargo in ['Atendente', 'Manuten
         dados_concluidos = []
 
     if dados_concluidos:
-        # Define quantas colunas queremos lado a lado (ex: 3 colunas por linha)
-        num_colunas = 3
-        colunas_grade = st.columns(num_colunas)
-        
-        for idx, c in enumerate(dados_concluidos):
-            # Distribui os chamados sequencialmente entre as colunas lado a lado
-            with colunas_grade[idx % num_colunas]:
-                # Estilização básica em bloco usando os containers nativos do Streamlit
-                with st.container(border=True):
-                    st.markdown(f"### ✅ Chamado Nº {c['id']}")
-                    st.markdown(f"**Pessoa:** {c['pessoa']} ({c.get('tipo_pessoa', 'N/A')})")
-                    st.markdown(f"**Setor:** `{c['categoria_solicitacao']}` | **Via:** {c.get('meio_contato', 'N/A')}")
-                    
-                    # Formata a data de abertura curta
-                    try:
-                        dt_ab = datetime.fromisoformat(c['data_hora'].replace("Z", "+00:00")).strftime("%d/%m %H:%M")
-                        st.markdown(f"📅 *Aberto em: {dt_ab}*")
-                    except:
-                        pass
-                    
-                    # Coloca o histórico de andamento compactado para não estourar a tela
-                    with st.expander("📝 Ver Histórico Textual"):
-                        st.text(c['solicitacao'])
-                    
-                    # Mostra a galeria de fotos associada àquela finalização
-                    if c.get('url_imagem'):
-                        with st.expander("📸 Ver Imagens Anexadas"):
-                            blocos_f = c['url_imagem'].split("||")
-                            for sub_bloco in blocos_f:
-                                partes = sub_bloco.split("::")
-                                img_src = partes[0] if len(partes) == 3 else sub_bloco
-                                st.image(img_src, use_container_width=True)
-                    
-                    # Botão para reabrir o chamado caso necessário
-                    if st.button("🔄 Reabrir Chamado", key=f"reabrir_{c['id']}", use_container_width=True):
-                        supabase.table("atendimentos").update({"etapa": "Em andamento"}).eq("id", c['id']).execute()
-                        st.success(f"Nº {c['id']} reaberto!")
-                        time.sleep(0.5)
-                        st.rerun()
+        if busca:
+            dados_filtrados = []
+            for item in dados_concluidos:
+                termo = busca.lower().strip()
+                id_texto = str(item['id'])
+                nome_texto = item['pessoa'].lower() if item['pessoa'] else ""
+                setor_texto = item['categoria_solicitacao'].lower() if item['categoria_solicitacao'] else ""
+                
+                if termo in id_texto or termo in nome_texto or termo in setor_texto:
+                    dados_filtrados = dados_filtrados + [item]
+        else:
+            dados_filtrados = dados_concluidos
+
+        if dados_filtrados:
+            num_colunas = 3
+            colunas_grade = st.columns(num_colunas)
+            
+            for idx, c in enumerate(dados_filtrados):
+                with colunas_grade[idx % num_colunas]:
+                    with st.container(border=True):
+                        st.markdown(f"### ✅ Chamado Nº {c['id']}")
+                        st.markdown(f"**Pessoa:** {c['pessoa']} ({c.get('tipo_pessoa', 'N/A')})")
+                        st.markdown(f"**Setor:** `{c['categoria_solicitacao']}` | **Via:** {c.get('meio_contato', 'N/A')}")
+                        
+                        try:
+                            dt_ab = datetime.fromisoformat(c['data_hora'].replace("Z", "+00:00")).strftime("%d/%m %H:%M")
+                            st.markdown(f"📅 *Aberto em: {dt_ab}*")
+                        except:
+                            pass
+                        
+                        with st.expander("📝 Ver Histórico Textual"):
+                            st.text(c['solicitacao'])
+                        
+                        if c.get('url_imagem'):
+                            with st.expander("📸 Ver Imagens Anexadas"):
+                                blocos_f = c['url_imagem'].split("||")
+                                for sub_bloco in blocos_f:
+                                    partes = sub_bloco.split("::")
+                                    img_src = partes[0] if len(partes) == 3 else sub_bloco
+                                    st.image(img_src, use_container_width=True)
+                        
+                        if st.button("🔄 Reabrir Chamado", key=f"reabrir_{c['id']}", use_container_width=True):
+                            supabase.table("atendimentos").update({"etapa": "Em andamento"}).eq("id", c['id']).execute()
+                            st.success(f"Nº {c['id']} reaberto!")
+                            time.sleep(0.5)
+                            st.rerun()
+        else:
+            st.warning("Nenhum chamado corresponde aos critérios da sua pesquisa.")
     else:
         st.info("Nenhum chamado concluído encontrado para o seu setor.")
 
