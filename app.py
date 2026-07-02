@@ -10,8 +10,8 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="CondoTickets SaaS", layout="wide", page_icon="🏢")
 
 # --- CONEXÃO SUPABASE ---
-SUPABASE_URL = "SUA_URL_AQUI"
-SUPABASE_KEY = "SUA_KEY_AQUI"
+SUPABASE_URL = "https://vsnojpmvkvijgeflkltn.supabase.co"
+SUPABASE_KEY = "sb_publishable_EFjZ74m8m8bxBFYiNhvjaA_aIyGzRS8"
 
 @st.cache_resource
 def init_connection():
